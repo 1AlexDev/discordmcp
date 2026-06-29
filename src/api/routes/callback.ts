@@ -66,6 +66,39 @@ async function fetchDiscordUser(accessToken: string): Promise<DiscordUserRespons
   return response.json() as Promise<DiscordUserResponse>;
 }
 
+/** Returns a minimal HTML status page. */
+function renderStatusPage(title: string, message: string, isError: boolean): string {
+  const iconColor = isError ? "bg-red-600" : "bg-neutral-900";
+  const iconSvg = isError
+    ? `<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} — Poke</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="bg-white text-neutral-900 min-h-screen flex items-center justify-center">
+  <main class="w-full max-w-sm px-6 text-center">
+    <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl ${iconColor} mb-5">
+      ${iconSvg}
+    </div>
+    <h1 class="text-xl font-semibold tracking-tight">${title}</h1>
+    <p class="mt-2 text-sm text-neutral-500 leading-relaxed">${message}</p>
+  </main>
+</body>
+</html>`;
+}
+
 export const callbackRouter = Router();
 
 /**
@@ -75,31 +108,35 @@ export const callbackRouter = Router();
 callbackRouter.get("/", async (req: Request, res: Response) => {
   // Discord sends error query params when the user denies authorization
   if (req.query.error) {
-    res.status(400).json({
-      error: "OAuth denied",
-      message: String(req.query.error_description ?? req.query.error),
-    });
+    const errorMsg = String(req.query.error_description ?? req.query.error);
+    res.status(400).type("html").send(
+      renderStatusPage("Authorization Denied", errorMsg, true)
+    );
     return;
   }
 
   const parsed = callbackQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid callback parameters",
-      details: parsed.error.flatten().fieldErrors,
-      hint: "guild_id is required when using the bot scope — ensure the user selected a server.",
-    });
+    res.status(400).type("html").send(
+      renderStatusPage(
+        "Invalid Request",
+        "Missing required callback parameters. Please retry the linking process.",
+        true
+      )
+    );
     return;
   }
 
   const { code, state, guild_id, permissions } = parsed.data;
 
   if (!guild_id) {
-    res.status(400).json({
-      error: "Missing guild_id",
-      message:
-        "No server was selected during authorization. Please retry and choose a Discord server.",
-    });
+    res.status(400).type("html").send(
+      renderStatusPage(
+        "No Server Selected",
+        "No Discord server was selected during authorization. Please retry and choose a server.",
+        true
+      )
+    );
     return;
   }
 
@@ -122,18 +159,20 @@ callbackRouter.get("/", async (req: Request, res: Response) => {
       botPermissions,
     });
 
-    res.status(200).json({
-      success: true,
-      message: "Discord account linked successfully.",
-      pokeUserId,
-      discordGuildId: guild_id,
-      discordUsername: discordUser.global_name ?? discordUser.username,
-    });
+    res.status(200).type("html").send(
+      renderStatusPage(
+        "Successfully Linked",
+        "Your Discord server has been connected. You can close this page."
+      , false)
+    );
   } catch (err) {
     console.error("[callback] OAuth linking failed:", err instanceof Error ? err.message : err);
-    res.status(500).json({
-      error: "Linking failed",
-      message: err instanceof Error ? err.message : "Unknown error",
-    });
+    res.status(500).type("html").send(
+      renderStatusPage(
+        "Linking Failed",
+        err instanceof Error ? err.message : "An unexpected error occurred. Please try again.",
+        true
+      )
+    );
   }
 });

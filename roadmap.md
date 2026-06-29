@@ -78,6 +78,10 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 | `ban_user` | Ban member by ID |
 | `create_role` | Create role with color/permissions |
 | `assign_role` | Assign role to member |
+| `get_users` | List or search members in linked guild |
+| `get_roles` | Fetch all available roles in linked guild |
+| `read_messages` | Read recent messages from a channel |
+| `get_server_info` | High-level server statistics |
 
 ---
 
@@ -91,13 +95,15 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 
 ### Phase 2 — OAuth Linking
 - [x] `/auth`, `/callback`, signed OAuth state
+- [x] Web UI for `/auth` endpoint
 - [ ] Token refresh helper (optional v1.1)
 
 ### Phase 3 — Bot Integration
 - [x] discord.js client + DiscordManager
 
 ### Phase 4 — MCP Tools
-- [x] All 7 tools, guild resolver, Zod schemas
+- [x] Initial 7 administrative tools, guild resolver, Zod schemas
+- [x] New read-only data fetching tools (`get_users`, `get_roles`, `read_messages`, `get_server_info`)
 
 ### Phase 5 — Hardening & Deploy
 - [x] Health check, README, logging

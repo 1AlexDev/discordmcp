@@ -151,7 +151,51 @@ export function registerDiscordTools(server: McpServer): void {
     async ({ userId, roleId }) =>
       withGuild((guildId) => discordManager.assignRole(guildId, userId, roleId))
   );
+
+  server.registerTool(
+    "get_users",
+    {
+      description: "Fetches a list of members in the linked Discord server.",
+      inputSchema: {
+        query: z.string().optional().describe("Optional username or display name to search for"),
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum number of users to return (default 25, max 100)"),
+      },
+    },
+    async ({ query, limit }) =>
+      withGuild((guildId) => discordManager.getUsers(guildId, query, limit))
+  );
+
+  server.registerTool(
+    "get_roles",
+    {
+      description: "Fetches all available roles in the linked Discord server and their IDs.",
+      inputSchema: {},
+    },
+    async () => withGuild((guildId) => discordManager.getRoles(guildId))
+  );
+
+  server.registerTool(
+    "read_messages",
+    {
+      description: "Reads the most recent messages from a specific text channel in the linked Discord server.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID to read messages from"),
+        limit: z.number().int().min(1).max(50).optional().describe("Maximum number of messages to return (default 20, max 50)"),
+      },
+    },
+    async ({ channelId, limit }) =>
+      withGuild((guildId) => discordManager.readMessages(guildId, channelId, limit))
+  );
+
+  server.registerTool(
+    "get_server_info",
+    {
+      description: "Returns high-level information and statistics about the linked Discord server.",
+      inputSchema: {},
+    },
+    async () => withGuild((guildId) => discordManager.getServerInfo(guildId))
+  );
 }
 
 /** Tool count for startup logging. */
-export const TOOL_COUNT = 7;
+export const TOOL_COUNT = 11;

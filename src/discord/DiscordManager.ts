@@ -30,6 +30,27 @@ export interface MessageSummary {
   id: string;
   channelId: string;
   content: string;
+  author: string;
+  authorId: string;
+  timestamp: string;
+}
+
+export interface MemberSummary {
+  id: string;
+  username: string;
+  displayName: string;
+  bot: boolean;
+  joinedAt: string | null;
+  roles: string[];
+}
+
+export interface ServerInfo {
+  id: string;
+  name: string;
+  memberCount: number;
+  channelCount: number;
+  ownerId: string;
+  icon: string | null;
 }
 
 /**
@@ -39,7 +60,7 @@ export interface MessageSummary {
 export class DiscordManager {
   /** Fetches a guild and verifies the bot is a member. */
   private async getGuild(
-    guildId: string
+    guildId: string,
   ): Promise<Guild | Extract<ToolResult, { success: false }>> {
     await waitForDiscordReady();
     const client = getDiscordClient();
@@ -50,7 +71,7 @@ export class DiscordManager {
     if (!guild) {
       return errorResult(
         "BOT_NOT_IN_GUILD",
-        `Bot is not present in guild ${guildId}. The user may need to re-invite the bot.`
+        `Bot is not present in guild ${guildId}. The user may need to re-invite the bot.`,
       );
     }
 
@@ -58,7 +79,7 @@ export class DiscordManager {
   }
 
   private isErrorResult(
-    value: Guild | Extract<ToolResult, { success: false }>
+    value: Guild | Extract<ToolResult, { success: false }>,
   ): value is Extract<ToolResult, { success: false }> {
     return "success" in value && value.success === false;
   }
@@ -96,7 +117,7 @@ export class DiscordManager {
   async sendMessage(
     guildId: string,
     channelId: string,
-    content: string
+    content: string,
   ): Promise<ToolResult<MessageSummary>> {
     try {
       const guildOrError = await this.getGuild(guildId);
@@ -106,7 +127,10 @@ export class DiscordManager {
       const channel = await guild.channels.fetch(channelId);
 
       if (!channel || !channel.isTextBased()) {
-        return errorResult("NOT_FOUND", `Channel ${channelId} is not a text channel in this guild.`);
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} is not a text channel in this guild.`,
+        );
       }
 
       const textChannel = channel as TextChannel;
@@ -116,6 +140,9 @@ export class DiscordManager {
         id: message.id,
         channelId: message.channelId,
         content: message.content,
+        author: message.author.username,
+        authorId: message.author.id,
+        timestamp: message.createdAt.toISOString(),
       });
     } catch (err) {
       return mapDiscordError(err);
@@ -127,7 +154,7 @@ export class DiscordManager {
     guildId: string,
     name: string,
     type: "text" | "voice",
-    parentId?: string
+    parentId?: string,
   ): Promise<ToolResult<ChannelSummary>> {
     try {
       const guildOrError = await this.getGuild(guildId);
@@ -163,7 +190,7 @@ export class DiscordManager {
   async kickUser(
     guildId: string,
     userId: string,
-    reason?: string
+    reason?: string,
   ): Promise<ToolResult<{ userId: string; action: "kicked" }>> {
     try {
       const guildOrError = await this.getGuild(guildId);
@@ -173,7 +200,10 @@ export class DiscordManager {
       const member = await guild.members.fetch(userId).catch(() => null);
 
       if (!member) {
-        return errorResult("NOT_FOUND", `User ${userId} is not a member of this guild.`);
+        return errorResult(
+          "NOT_FOUND",
+          `User ${userId} is not a member of this guild.`,
+        );
       }
 
       await member.kick(reason ?? "Kicked via Poke Discord MCP");
@@ -189,7 +219,7 @@ export class DiscordManager {
     guildId: string,
     userId: string,
     reason?: string,
-    deleteMessageDays?: number
+    deleteMessageDays?: number,
   ): Promise<ToolResult<{ userId: string; action: "banned" }>> {
     try {
       const guildOrError = await this.getGuild(guildId);
@@ -197,7 +227,9 @@ export class DiscordManager {
 
       const guild = guildOrError;
       const deleteSeconds =
-        deleteMessageDays != null ? deleteMessageDays * 24 * 60 * 60 : undefined;
+        deleteMessageDays != null
+          ? deleteMessageDays * 24 * 60 * 60
+          : undefined;
 
       await guild.members.ban(userId, {
         reason: reason ?? "Banned via Poke Discord MCP",
@@ -215,7 +247,7 @@ export class DiscordManager {
     guildId: string,
     name: string,
     color?: number,
-    permissions?: string
+    permissions?: string,
   ): Promise<ToolResult<RoleSummary>> {
     try {
       const guildOrError = await this.getGuild(guildId);
@@ -243,8 +275,10 @@ export class DiscordManager {
   async assignRole(
     guildId: string,
     userId: string,
-    roleId: string
-  ): Promise<ToolResult<{ userId: string; roleId: string; action: "assigned" }>> {
+    roleId: string,
+  ): Promise<
+    ToolResult<{ userId: string; roleId: string; action: "assigned" }>
+  > {
     try {
       const guildOrError = await this.getGuild(guildId);
       if (this.isErrorResult(guildOrError)) return guildOrError;
@@ -253,17 +287,142 @@ export class DiscordManager {
       const member = await guild.members.fetch(userId).catch(() => null);
 
       if (!member) {
-        return errorResult("NOT_FOUND", `User ${userId} is not a member of this guild.`);
+        return errorResult(
+          "NOT_FOUND",
+          `User ${userId} is not a member of this guild.`,
+        );
       }
 
       const role = await guild.roles.fetch(roleId).catch(() => null);
       if (!role) {
-        return errorResult("NOT_FOUND", `Role ${roleId} does not exist in this guild.`);
+        return errorResult(
+          "NOT_FOUND",
+          `Role ${roleId} does not exist in this guild.`,
+        );
       }
 
       await member.roles.add(role, "Assigned via Poke Discord MCP");
 
       return successResult({ userId, roleId, action: "assigned" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Fetches members of the guild, optionally filtering by display name. */
+  async getUsers(
+    guildId: string,
+    query?: string,
+    limit: number = 25,
+  ): Promise<ToolResult<MemberSummary[]>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const clampedLimit = Math.min(Math.max(limit, 1), 100);
+
+      const members = query
+        ? await guild.members.search({ query, limit: clampedLimit })
+        : await guild.members.list({ limit: clampedLimit });
+
+      const summaries: MemberSummary[] = members.map((m) => ({
+        id: m.id,
+        username: m.user.username,
+        displayName: m.displayName,
+        bot: m.user.bot,
+        joinedAt: m.joinedAt?.toISOString() ?? null,
+        roles: m.roles.cache
+          .filter((r) => r.id !== guild.id)
+          .map((r) => r.name),
+      }));
+
+      return successResult(summaries);
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Fetches all roles in the guild. */
+  async getRoles(guildId: string): Promise<ToolResult<RoleSummary[]>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const roles = await guild.roles.fetch();
+
+      const summaries: RoleSummary[] = roles
+        .filter((r) => r.id !== guild.id) // exclude @everyone
+        .sort((a, b) => b.position - a.position)
+        .map((r) => ({ id: r.id, name: r.name, color: r.color }));
+
+      return successResult(summaries);
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Reads recent messages from a text channel. */
+  async readMessages(
+    guildId: string,
+    channelId: string,
+    limit: number = 20,
+  ): Promise<ToolResult<MessageSummary[]>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} is not a text channel in this guild.`,
+        );
+      }
+
+      const textChannel = channel as TextChannel;
+      const clampedLimit = Math.min(Math.max(limit, 1), 50);
+      const messages = await textChannel.messages.fetch({
+        limit: clampedLimit,
+      });
+
+      const summaries: MessageSummary[] = messages.map((m) => ({
+        id: m.id,
+        channelId: m.channelId,
+        content: m.content,
+        author: m.author.username,
+        authorId: m.author.id,
+        timestamp: m.createdAt.toISOString(),
+      }));
+
+      // Return in chronological order (oldest first)
+      summaries.reverse();
+      return successResult(summaries);
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Returns high-level server information. */
+  async getServerInfo(guildId: string): Promise<ToolResult<ServerInfo>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channels = await guild.channels.fetch();
+
+      return successResult({
+        id: guild.id,
+        name: guild.name,
+        memberCount: guild.memberCount,
+        channelCount: channels.size,
+        ownerId: guild.ownerId,
+        icon: guild.iconURL({ size: 256 }),
+      });
     } catch (err) {
       return mapDiscordError(err);
     }

@@ -43,7 +43,8 @@ export function startHttpServer(app: Express, port: number): void {
   app.listen(port, "0.0.0.0", () => {
     console.log(`[server] Listening on 0.0.0.0:${port}`);
     console.log(`[server] Public base URL: ${env.BASE_URL}`);
-    console.log(`[server] OAuth link: ${env.BASE_URL}/auth?poke_user_id=<id>`);
+    console.log(`[server] OAuth UI: ${env.BASE_URL}/auth`);
+    console.log(`[server] OAuth init: ${env.BASE_URL}/auth/init?poke_user_id=<id>`);
     console.log(`[server] OAuth callback: ${env.BASE_URL}/callback`);
 
     if (env.MCP_TRANSPORT === "sse") {
