@@ -145,10 +145,21 @@ async function executeAction(
 
       const guild = await context.client.guilds.fetch(context.guildId).catch(() => null);
       if (!guild) return;
+
+      const permissionOverwrites = Array.isArray(action.permission_overwrites)
+        ? action.permission_overwrites.map((ow: any) => ({
+            id: ow.id === "$userId" ? context.member?.id : ow.id,
+            type: ow.type,
+            allow: ow.allow ? BigInt(ow.allow) : undefined,
+            deny: ow.deny ? BigInt(ow.deny) : undefined,
+          })).filter(ow => ow.id)
+        : undefined;
+
       const channel = await guild.channels.create({
         name,
         type: ChannelType.GuildText,
         parent: typeof action.parent_id === "string" ? action.parent_id : undefined,
+        permissionOverwrites: permissionOverwrites as any,
       });
 
       if (channel.isTextBased()) {
