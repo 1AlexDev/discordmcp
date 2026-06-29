@@ -3,6 +3,7 @@ import { z } from "zod";
 import { env, discordRedirectUri } from "../../config/env.js";
 import { upsertAccountLink } from "../../db/supabase.js";
 import { verifyOAuthState } from "../oauth-state.js";
+import { setPokeUserCookie } from "../session.js";
 
 const callbackQuerySchema = z.object({
   code: z.string().min(1),
@@ -29,7 +30,9 @@ interface DiscordUserResponse {
 }
 
 /** Exchanges an authorization code for Discord OAuth tokens. */
-async function exchangeCodeForTokens(code: string): Promise<DiscordTokenResponse> {
+async function exchangeCodeForTokens(
+  code: string,
+): Promise<DiscordTokenResponse> {
   const body = new URLSearchParams({
     client_id: env.DISCORD_CLIENT_ID,
     client_secret: env.DISCORD_CLIENT_SECRET,
@@ -46,14 +49,18 @@ async function exchangeCodeForTokens(code: string): Promise<DiscordTokenResponse
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Discord token exchange failed (${response.status}): ${text}`);
+    throw new Error(
+      `Discord token exchange failed (${response.status}): ${text}`,
+    );
   }
 
   return response.json() as Promise<DiscordTokenResponse>;
 }
 
 /** Fetches the authenticated Discord user's profile. */
-async function fetchDiscordUser(accessToken: string): Promise<DiscordUserResponse> {
+async function fetchDiscordUser(
+  accessToken: string,
+): Promise<DiscordUserResponse> {
   const response = await fetch(DISCORD_USER_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -67,7 +74,12 @@ async function fetchDiscordUser(accessToken: string): Promise<DiscordUserRespons
 }
 
 /** Returns a minimal HTML status page. */
-function renderStatusPage(title: string, message: string, isError: boolean): string {
+function renderStatusPage(
+  title: string,
+  message: string,
+  isError: boolean,
+  cta?: { href: string; label: string },
+): string {
   const iconColor = isError ? "bg-red-600" : "bg-neutral-900";
   const iconSvg = isError
     ? `<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>`
@@ -94,6 +106,11 @@ function renderStatusPage(title: string, message: string, isError: boolean): str
     </div>
     <h1 class="text-xl font-semibold tracking-tight">${title}</h1>
     <p class="mt-2 text-sm text-neutral-500 leading-relaxed">${message}</p>
+    ${
+      cta
+        ? `<a href="${cta.href}" class="mt-6 inline-flex items-center justify-center rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-neutral-800">${cta.label}</a>`
+        : ""
+    }
   </main>
 </body>
 </html>`;
@@ -109,34 +126,41 @@ callbackRouter.get("/", async (req: Request, res: Response) => {
   // Discord sends error query params when the user denies authorization
   if (req.query.error) {
     const errorMsg = String(req.query.error_description ?? req.query.error);
-    res.status(400).type("html").send(
-      renderStatusPage("Authorization Denied", errorMsg, true)
-    );
+    res
+      .status(400)
+      .type("html")
+      .send(renderStatusPage("Authorization Denied", errorMsg, true));
     return;
   }
 
   const parsed = callbackQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).type("html").send(
-      renderStatusPage(
-        "Invalid Request",
-        "Missing required callback parameters. Please retry the linking process.",
-        true
-      )
-    );
+    res
+      .status(400)
+      .type("html")
+      .send(
+        renderStatusPage(
+          "Invalid Request",
+          "Missing required callback parameters. Please retry the linking process.",
+          true,
+        ),
+      );
     return;
   }
 
   const { code, state, guild_id, permissions } = parsed.data;
 
   if (!guild_id) {
-    res.status(400).type("html").send(
-      renderStatusPage(
-        "No Server Selected",
-        "No Discord server was selected during authorization. Please retry and choose a server.",
-        true
-      )
-    );
+    res
+      .status(400)
+      .type("html")
+      .send(
+        renderStatusPage(
+          "No Server Selected",
+          "No Discord server was selected during authorization. Please retry and choose a server.",
+          true,
+        ),
+      );
     return;
   }
 
@@ -159,20 +183,34 @@ callbackRouter.get("/", async (req: Request, res: Response) => {
       botPermissions,
     });
 
-    res.status(200).type("html").send(
-      renderStatusPage(
-        "Successfully Linked",
-        "Your Discord server has been connected. You can close this page."
-      , false)
-    );
+    setPokeUserCookie(res, pokeUserId);
+    res
+      .status(200)
+      .type("html")
+      .send(
+        renderStatusPage(
+          "Successfully Linked",
+          "Your Discord server has been connected. You can close this page or open your dashboard.",
+          false,
+          { href: "/dashboard", label: "Open dashboard" },
+        ),
+      );
   } catch (err) {
-    console.error("[callback] OAuth linking failed:", err instanceof Error ? err.message : err);
-    res.status(500).type("html").send(
-      renderStatusPage(
-        "Linking Failed",
-        err instanceof Error ? err.message : "An unexpected error occurred. Please try again.",
-        true
-      )
+    console.error(
+      "[callback] OAuth linking failed:",
+      err instanceof Error ? err.message : err,
     );
+    res
+      .status(500)
+      .type("html")
+      .send(
+        renderStatusPage(
+          "Linking Failed",
+          err instanceof Error
+            ? err.message
+            : "An unexpected error occurred. Please try again.",
+          true,
+        ),
+      );
   }
 });

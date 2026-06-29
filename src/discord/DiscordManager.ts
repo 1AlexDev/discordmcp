@@ -3,6 +3,12 @@ import {
   ChannelType,
   PermissionsBitField,
   type TextChannel,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  StringSelectMenuBuilder,
+  ButtonStyle,
+  StringSelectMenuOptionBuilder,
 } from "discord.js";
 import {
   getDiscordClient,
@@ -180,6 +186,291 @@ export class DiscordManager {
         type,
         parentId: channel.parentId,
         position: channel.position,
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Fetches all categories in the guild. */
+  async getCategories(guildId: string): Promise<ToolResult<ChannelSummary[]>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channels = await guild.channels.fetch();
+
+      const categories = channels.filter(
+        (c) => c && c.type === ChannelType.GuildCategory,
+      );
+
+      const summaries: ChannelSummary[] = [];
+      for (const channel of categories.values()) {
+        if (!channel) continue;
+
+        summaries.push({
+          id: channel.id,
+          name: channel.name,
+          type: ChannelTypeLabel(channel.type),
+          parentId: null,
+          position: getChannelPosition(channel),
+        });
+      }
+
+      summaries.sort((a, b) => a.position - b.position);
+      return successResult(summaries);
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Deletes a category. Optionally orphaned channels can be deleted but discord orphans them by default. */
+  async deleteCategory(
+    guildId: string,
+    categoryId: string,
+  ): Promise<ToolResult<{ id: string; action: "deleted" }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(categoryId);
+
+      if (!channel || channel.type !== ChannelType.GuildCategory) {
+        return errorResult(
+          "NOT_FOUND",
+          `Category ${categoryId} not found or is not a category.`,
+        );
+      }
+
+      await channel.delete("Deleted via Poke Discord MCP");
+      return successResult({ id: categoryId, action: "deleted" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Gets details for a specific channel. */
+  async getChannel(
+    guildId: string,
+    channelId: string,
+  ): Promise<ToolResult<ChannelSummary & { topic: string | null }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel) {
+        return errorResult("NOT_FOUND", `Channel ${channelId} not found.`);
+      }
+
+      return successResult({
+        id: channel.id,
+        name: channel.name,
+        type: ChannelTypeLabel(channel.type),
+        parentId: channel.parentId,
+        position: getChannelPosition(channel as any),
+        topic:
+          channel.isTextBased() && "topic" in channel
+            ? (channel as TextChannel).topic
+            : null,
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Deletes a channel. */
+  async deleteChannel(
+    guildId: string,
+    channelId: string,
+  ): Promise<ToolResult<{ id: string; action: "deleted" }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel) {
+        return errorResult("NOT_FOUND", `Channel ${channelId} not found.`);
+      }
+
+      await channel.delete("Deleted via Poke Discord MCP");
+      return successResult({ id: channelId, action: "deleted" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Updates an existing channel. */
+  async updateChannel(
+    guildId: string,
+    channelId: string,
+    options: { name?: string; topic?: string; parentId?: string },
+  ): Promise<ToolResult<ChannelSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel) {
+        return errorResult("NOT_FOUND", `Channel ${channelId} not found.`);
+      }
+
+      const updateData: any = {};
+      if (options.name !== undefined) updateData.name = options.name;
+      if (options.topic !== undefined && channel.isTextBased())
+        updateData.topic = options.topic;
+      if (options.parentId !== undefined) updateData.parent = options.parentId;
+
+      const updated = await channel.edit(updateData);
+
+      return successResult({
+        id: updated.id,
+        name: updated.name,
+        type: ChannelTypeLabel(updated.type),
+        parentId: updated.parentId,
+        position: getChannelPosition(updated as any),
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Sends an embed message to a text channel. */
+  async sendEmbedMessage(
+    guildId: string,
+    channelId: string,
+    embedData: {
+      title?: string;
+      description?: string;
+      color?: number;
+      fields?: Array<{ name: string; value: string; inline?: boolean }>;
+      footer?: string;
+    },
+  ): Promise<ToolResult<MessageSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} is not a text channel in this guild.`,
+        );
+      }
+
+      const embed = new EmbedBuilder();
+      if (embedData.title) embed.setTitle(embedData.title);
+      if (embedData.description) embed.setDescription(embedData.description);
+      if (embedData.color !== undefined) embed.setColor(embedData.color);
+      if (embedData.fields) embed.addFields(embedData.fields);
+      if (embedData.footer) embed.setFooter({ text: embedData.footer });
+
+      const textChannel = channel as TextChannel;
+      const message = await textChannel.send({ embeds: [embed] });
+
+      return successResult({
+        id: message.id,
+        channelId: message.channelId,
+        content: message.content,
+        author: message.author.username,
+        authorId: message.author.id,
+        timestamp: message.createdAt.toISOString(),
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Sends a message with interactive components. */
+  async sendComponentMessage(
+    guildId: string,
+    channelId: string,
+    content: string,
+    componentsData: Array<{
+      type: "button" | "select";
+      customId: string;
+      label?: string;
+      style?: number; // 1: Primary, 2: Secondary, 3: Success, 4: Danger, 5: Link
+      options?: Array<{ label: string; value: string; description?: string }>;
+      placeholder?: string;
+    }>,
+  ): Promise<ToolResult<MessageSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} is not a text channel in this guild.`,
+        );
+      }
+
+      const rows: ActionRowBuilder<any>[] = [];
+
+      for (const comp of componentsData) {
+        if (comp.type === "button") {
+          const btn = new ButtonBuilder()
+            .setCustomId(comp.customId)
+            .setLabel(comp.label ?? "Button")
+            .setStyle(comp.style ?? ButtonStyle.Primary);
+
+          rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(btn));
+        } else if (comp.type === "select") {
+          const select = new StringSelectMenuBuilder()
+            .setCustomId(comp.customId)
+            .setPlaceholder(comp.placeholder ?? "Make a selection...");
+
+          if (comp.options && comp.options.length > 0) {
+            select.addOptions(
+              comp.options.map((opt) =>
+                new StringSelectMenuOptionBuilder()
+                  .setLabel(opt.label)
+                  .setValue(opt.value)
+                  .setDescription(opt.description ?? ""),
+              ),
+            );
+          } else {
+            // Discord requires at least one option
+            select.addOptions(
+              new StringSelectMenuOptionBuilder()
+                .setLabel("Default Option")
+                .setValue("default"),
+            );
+          }
+
+          rows.push(
+            new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+              select,
+            ),
+          );
+        }
+      }
+
+      const textChannel = channel as TextChannel;
+      const message = await textChannel.send({ content, components: rows });
+
+      return successResult({
+        id: message.id,
+        channelId: message.channelId,
+        content: message.content,
+        author: message.author.username,
+        authorId: message.author.id,
+        timestamp: message.createdAt.toISOString(),
       });
     } catch (err) {
       return mapDiscordError(err);

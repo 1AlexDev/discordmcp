@@ -62,7 +62,7 @@ export interface UpsertAccountLinkInput {
 
 /** Creates or updates a Discord account link for a Poke user. */
 export async function upsertAccountLink(
-  input: UpsertAccountLinkInput
+  input: UpsertAccountLinkInput,
 ): Promise<AccountLink> {
   const supabase = getSupabase();
 
@@ -74,12 +74,13 @@ export async function upsertAccountLink(
     access_token: input.accessToken,
     refresh_token: input.refreshToken ?? null,
     token_expires_at: input.tokenExpiresAt?.toISOString() ?? null,
-    bot_permissions: input.botPermissions != null ? Number(input.botPermissions) : null,
+    bot_permissions:
+      input.botPermissions != null ? Number(input.botPermissions) : null,
   };
 
   const { data, error } = await supabase
     .from(ACCOUNT_LINKS_TABLE)
-    .upsert(row, { onConflict: "poke_user_id" })
+    .upsert(row, { onConflict: "poke_user_id,discord_guild_id" })
     .select()
     .single();
 
@@ -92,7 +93,7 @@ export async function upsertAccountLink(
 
 /** Fetches an account link by Poke user ID. Returns null if not linked. */
 export async function getAccountLinkByPokeUserId(
-  pokeUserId: string
+  pokeUserId: string,
 ): Promise<AccountLink | null> {
   const supabase = getSupabase();
 
@@ -100,6 +101,8 @@ export async function getAccountLinkByPokeUserId(
     .from(ACCOUNT_LINKS_TABLE)
     .select("*")
     .eq("poke_user_id", pokeUserId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -108,4 +111,39 @@ export async function getAccountLinkByPokeUserId(
 
   if (!data) return null;
   return rowToAccountLink(data as AccountLinkRow);
+}
+
+/** Fetches all account links for a Poke user, newest updated first. */
+export async function getAccountLinksByPokeUserId(
+  pokeUserId: string,
+): Promise<AccountLink[]> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from(ACCOUNT_LINKS_TABLE)
+    .select("*")
+    .eq("poke_user_id", pokeUserId)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch account links: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => rowToAccountLink(row as AccountLinkRow));
+}
+
+/** Deletes all account links for a Poke user. Used by dashboard logout/disconnect. */
+export async function deleteAccountLinksByPokeUserId(
+  pokeUserId: string,
+): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error } = await supabase
+    .from(ACCOUNT_LINKS_TABLE)
+    .delete()
+    .eq("poke_user_id", pokeUserId);
+
+  if (error) {
+    throw new Error(`Failed to delete account links: ${error.message}`);
+  }
 }

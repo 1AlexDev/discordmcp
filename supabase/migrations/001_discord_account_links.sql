@@ -3,7 +3,7 @@
 
 create table public.discord_account_links (
   id                  uuid primary key default gen_random_uuid(),
-  poke_user_id        text not null unique,
+  poke_user_id        text not null,
   discord_user_id     text not null,
   discord_guild_id    text not null,
   discord_username    text,
@@ -14,6 +14,13 @@ create table public.discord_account_links (
   linked_at           timestamptz not null default now(),
   updated_at          timestamptz not null default now()
 );
+
+alter table public.discord_account_links
+  add constraint discord_account_links_poke_user_guild_unique
+  unique (poke_user_id, discord_guild_id);
+
+create index idx_discord_account_links_poke_user
+  on public.discord_account_links (poke_user_id);
 
 create index idx_discord_account_links_guild
   on public.discord_account_links (discord_guild_id);

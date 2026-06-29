@@ -1,10 +1,10 @@
-import { getAccountLinkByPokeUserId } from "./supabase.js";
+import { getAccountLinksByPokeUserId } from "./supabase.js";
 import type { AccountLink, ToolResult } from "../types/schemas.js";
 
 export class GuildResolverError extends Error {
   constructor(
     public readonly code: Extract<ToolResult, { success: false }>["code"],
-    message: string
+    message: string,
   ) {
     super(message);
     this.name = "GuildResolverError";
@@ -12,19 +12,21 @@ export class GuildResolverError extends Error {
 }
 
 /**
- * Resolves a Poke user ID to their linked Discord guild.
+ * Resolves a Poke user ID to a linked Discord guild.
+ * If multiple guilds are linked, the most recently updated link is used.
  * Throws GuildResolverError with NOT_LINKED when no mapping exists.
  */
 export async function resolveGuildForPokeUser(
-  pokeUserId: string
+  pokeUserId: string,
 ): Promise<AccountLink> {
-  const link = await getAccountLinkByPokeUserId(pokeUserId);
+  const links = await getAccountLinksByPokeUserId(pokeUserId);
+  const link = links[0];
 
   if (!link) {
     throw new GuildResolverError(
       "NOT_LINKED",
       `No Discord server is linked for Poke user "${pokeUserId}". ` +
-        "The user must complete OAuth linking via /auth first."
+        "The user must complete OAuth linking via /auth first.",
     );
   }
 

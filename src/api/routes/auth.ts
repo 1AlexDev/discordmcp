@@ -6,6 +6,7 @@ import {
   discordRedirectUri,
 } from "../../config/env.js";
 import { createOAuthState } from "../oauth-state.js";
+import { setPokeUserCookie } from "../session.js";
 
 const initQuerySchema = z.object({
   poke_user_id: z.string().min(1, "poke_user_id query parameter is required"),
@@ -204,6 +205,7 @@ authRouter.get("/init", (req: Request, res: Response) => {
     return;
   }
 
+  setPokeUserCookie(res, parsed.data.poke_user_id);
   const authUrl = buildDiscordAuthUrl(parsed.data.poke_user_id);
   res.redirect(authUrl);
 });

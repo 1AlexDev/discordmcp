@@ -1,6 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
 import { authRouter } from "./routes/auth.js";
 import { callbackRouter } from "./routes/callback.js";
+import { dashboardRouter, userApiRouter } from "./routes/dashboard.js";
 import { registerMcpHttpRoutes } from "../mcp/server.js";
 import { env } from "../config/env.js";
 
@@ -25,6 +26,8 @@ export function createApp(): Express {
 
   app.use("/auth", authRouter);
   app.use("/callback", callbackRouter);
+  app.use("/dashboard", dashboardRouter);
+  app.use("/api", userApiRouter);
 
   if (env.MCP_TRANSPORT === "sse") {
     registerMcpHttpRoutes(app);
@@ -44,8 +47,11 @@ export function startHttpServer(app: Express, port: number): void {
     console.log(`[server] Listening on 0.0.0.0:${port}`);
     console.log(`[server] Public base URL: ${env.BASE_URL}`);
     console.log(`[server] OAuth UI: ${env.BASE_URL}/auth`);
-    console.log(`[server] OAuth init: ${env.BASE_URL}/auth/init?poke_user_id=<id>`);
+    console.log(
+      `[server] OAuth init: ${env.BASE_URL}/auth/init?poke_user_id=<id>`,
+    );
     console.log(`[server] OAuth callback: ${env.BASE_URL}/callback`);
+    console.log(`[server] Dashboard: ${env.BASE_URL}/dashboard`);
 
     if (env.MCP_TRANSPORT === "sse") {
       console.log(`[server] MCP endpoint: ${env.BASE_URL}/mcp`);

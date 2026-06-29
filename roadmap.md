@@ -22,7 +22,7 @@ Production and local dev run **one Node process** on a **single HTTP port** (`PO
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                     Unified Express Server (PORT)                           │
-│  GET  /health   GET  /auth   GET  /callback   POST  /mcp                    │
+│ GET /health  GET /auth  GET /dashboard  GET /callback  GET /api/*  POST /mcp│
 └───────────────────────────────────┬─────────────────────────────────────────┘
                                     │
           ┌─────────────────────────┼─────────────────────────┐
@@ -35,7 +35,9 @@ Production and local dev run **one Node process** on a **single HTTP port** (`PO
 
 **Poke Recipe Server URL:** `{BASE_URL}/mcp` (e.g. `https://your-app.onrender.com/mcp`)
 
-**OAuth linking URL:** `{BASE_URL}/auth?poke_user_id=<id>`
+**OAuth linking URL:** `{BASE_URL}/auth`
+
+**Dashboard URL:** `{BASE_URL}/dashboard` (uses `poke_user_id` query/header or HTTP-only cookie)
 
 **Discord redirect URI:** `{BASE_URL}/callback` (or explicit `DISCORD_REDIRECT_URI`)
 
@@ -67,7 +69,7 @@ See [README.md](README.md) and [render.yaml](render.yaml) for deployment.
 
 Tool schemas do **not** expose `pokeUserId`. Poke sends `X-Poke-User-Id` on each `/mcp` request, and the Express transport layer stores it in `AsyncLocalStorage` so tool handlers can resolve the linked Discord guild transparently.
 
-The service is public and multi-tenant. User isolation is based on the Poke user ID from the request context plus the Supabase `poke_user_id` to `discord_guild_id` mapping. If no mapping exists, the tool returns `NOT_LINKED`.
+The service is public and multi-tenant. User isolation is based on the Poke user ID from the request context plus the Supabase `poke_user_id` to `discord_guild_id` mapping. A single Poke user can link multiple Discord guilds; MCP tools currently default to the most recently updated linked guild. If no mapping exists, the tool returns `NOT_LINKED`.
 
 | Tool | Description |
 |------|-------------|
@@ -82,6 +84,13 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 | `get_roles` | Fetch all available roles in linked guild |
 | `read_messages` | Read recent messages from a channel |
 | `get_server_info` | High-level server statistics |
+| `get_categories` | List all categories |
+| `delete_category` | Delete a category |
+| `get_channel` | Fetch detailed channel info |
+| `delete_channel` | Delete a channel |
+| `update_channel` | Update channel name, topic, or parent |
+| `send_embed_message`| Send a rich embed message |
+| `send_component_message` | Send message with buttons/select menus |
 
 ---
 
@@ -96,6 +105,8 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 ### Phase 2 — OAuth Linking
 - [x] `/auth`, `/callback`, signed OAuth state
 - [x] Web UI for `/auth` endpoint
+- [x] Multi-server dashboard at `/dashboard`
+- [x] Dashboard session cookie for linked Poke users
 - [ ] Token refresh helper (optional v1.1)
 
 ### Phase 3 — Bot Integration
@@ -104,8 +115,12 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 ### Phase 4 — MCP Tools
 - [x] Initial 7 administrative tools, guild resolver, Zod schemas
 - [x] New read-only data fetching tools (`get_users`, `get_roles`, `read_messages`, `get_server_info`)
+- [x] Advanced management tools (`get_categories`, `delete_category`, `get_channel`, `delete_channel`, `update_channel`)
+- [x] Rich messaging tools (`send_embed_message`, `send_component_message`)
 
 ### Phase 5 — Hardening & Deploy
+- [x] 1:many account-link architecture (`poke_user_id`, `discord_guild_id` unique pair)
+- [x] Dashboard API endpoint (`GET /api/user/servers`)
 - [x] Health check, README, logging
 - [x] **Unified single-port architecture** (OAuth + MCP on one Express server)
 - [x] **`render.yaml` blueprint** for one-click Render deploy
@@ -116,9 +131,9 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 
 ## Current Progress
 
-**Status:** Production-ready for Render. Unified server on single `PORT`; deploy via `render.yaml`. MCP identity is request-scoped through Poke headers instead of manual tool parameters.
+**Status:** Production-ready for Render. Unified server on single `PORT`; deploy via `render.yaml`. MCP identity is request-scoped through Poke headers instead of manual tool parameters. Account links now support multiple Discord servers per Poke user, with `/dashboard` for public connection management.
 
-**Next step:** Deploy to Render, set `BASE_URL` to Render URL, configure Poke Recipe Server URL to `{BASE_URL}/mcp`, run OAuth linking E2E test.
+**Next step:** Apply Supabase migrations, deploy to Render, set `BASE_URL` to Render URL, configure Poke Recipe Server URL to `{BASE_URL}/mcp`, run OAuth/dashboard E2E tests.
 
 ---
 
@@ -126,6 +141,6 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 
 1. **Always read this file first** before making changes.
 2. Do **not** reintroduce a separate MCP port — Render exposes one port per web service.
-3. Do **not** add `pokeUserId` to MCP tool schemas. Resolve it from the `X-Poke-User-Id` request context and then query Supabase.
+3. Do **not** add `pokeUserId` to MCP tool schemas. Resolve it from the `X-Poke-User-Id` request context and then query Supabase. If multiple guilds are linked, the resolver uses the most recently updated account link by default.
 4. `BASE_URL` drives OAuth links, redirect URI derivation, and Poke MCP Server URL.
 5. Never log or commit secrets.
