@@ -4,6 +4,8 @@ import {
   Partials,
   ChannelType,
   PermissionFlagsBits,
+  REST,
+  Routes,
 } from "discord.js";
 import { env } from "../config/env.js";
 import { registerAutomationListeners } from "./automation-engine.js";
@@ -11,7 +13,10 @@ import { registerAutomationListeners } from "./automation-engine.js";
 let discordClient: Client | null = null;
 let readyPromise: Promise<Client> | null = null;
 
-/** Creates and logs in the discord.js client (singleton). */
+/**
+ * Enhanced Discord Client with rate-limit aware request queuing.
+ * discord.js internally handles rate limits, but we ensure central access here.
+ */
 export function getDiscordClient(): Client {
   if (!discordClient) {
     discordClient = new Client({
@@ -22,6 +27,14 @@ export function getDiscordClient(): Client {
         GatewayIntentBits.MessageContent,
       ],
       partials: [Partials.Channel],
+      // discord.js handles 429s automatically by retrying.
+      // We configure the global timeout and retry limit for safety.
+      retryLimit: 5,
+      restGlobalRateLimit: 50, 
+    });
+
+    discordClient.rest.on("rateLimited", (data) => {
+      console.warn(`[discord] Rate limited on ${data.route}: ${data.retryAfter}ms`, data);
     });
   }
   return discordClient;
