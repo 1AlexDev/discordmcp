@@ -12,6 +12,13 @@ import {
 } from "discord.js";
 import { env } from "../config/env.js";
 import {
+  createAutomationScript as insertAutomationScript,
+  deleteAutomationScript as removeAutomationScript,
+  getAutomationScriptsByGuild,
+  type AutomationScript,
+} from "../db/supabase.js";
+import { invalidateAutomationCache } from "./automation-engine.js";
+import {
   getDiscordClient,
   waitForDiscordReady,
   parsePermissions,
@@ -967,6 +974,290 @@ export class DiscordManager {
 
       const data = (await response.json()) as any;
       return successResult({ id: data.id });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Creates a database-driven automation script for this guild. */
+  async createAutomationScript(
+    guildId: string,
+    pokeUserId: string,
+    eventType: string,
+    triggerId: string | null | undefined,
+    actions: unknown[],
+  ): Promise<ToolResult<AutomationScript>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const script = await insertAutomationScript({
+        pokeUserId,
+        discordGuildId: guildId,
+        eventType,
+        triggerId,
+        actions,
+      });
+
+      invalidateAutomationCache();
+      return successResult(script);
+    } catch (err) {
+      return errorResult(
+        "UNKNOWN",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /** Lists automation scripts for this guild. */
+  async listAutomationScripts(
+    guildId: string,
+    pokeUserId: string,
+  ): Promise<ToolResult<AutomationScript[]>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const scripts = await getAutomationScriptsByGuild(pokeUserId, guildId);
+      return successResult(scripts);
+    } catch (err) {
+      return errorResult(
+        "UNKNOWN",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /** Deletes an automation script owned by this Poke user. */
+  async deleteAutomationScript(
+    _guildId: string,
+    pokeUserId: string,
+    scriptId: string,
+  ): Promise<ToolResult<{ id: string; action: "deleted" }>> {
+    try {
+      const deleted = await removeAutomationScript(scriptId, pokeUserId);
+      if (!deleted) {
+        return errorResult(
+          "NOT_FOUND",
+          `Automation script ${scriptId} not found.`,
+        );
+      }
+
+      invalidateAutomationCache();
+      return successResult({ id: scriptId, action: "deleted" });
+    } catch (err) {
+      return errorResult(
+        "UNKNOWN",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /** Edits channel permission overwrites for a role or user. */
+  async editChannelPermissions(
+    guildId: string,
+    channelId: string,
+    targetId: string,
+    permissions: Record<string, boolean>,
+  ): Promise<
+    ToolResult<{ channelId: string; targetId: string; action: "updated" }>
+  > {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !("permissionOverwrites" in channel)) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or does not support permission overwrites.`,
+        );
+      }
+
+      await channel.permissionOverwrites.edit(targetId, permissions as any, {
+        reason: "Updated via Poke Discord MCP",
+      });
+
+      return successResult({ channelId, targetId, action: "updated" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Creates a webhook in a text channel. */
+  async createWebhook(
+    guildId: string,
+    channelId: string,
+    name: string,
+  ): Promise<ToolResult<{ id: string; url: string; name: string }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased() || !("createWebhook" in channel)) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or does not support webhooks.`,
+        );
+      }
+
+      const webhook = await channel.createWebhook({
+        name,
+        reason: "Created via Poke Discord MCP",
+      });
+
+      return successResult({
+        id: webhook.id,
+        url: webhook.url,
+        name: webhook.name,
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Executes a webhook using either webhook_url or webhook_id + token. */
+  async executeWebhook(input: {
+    webhookUrl?: string;
+    webhookId?: string;
+    token?: string;
+    content?: string;
+    username?: string;
+    avatarUrl?: string;
+    embeds?: Array<{
+      title?: string;
+      description?: string;
+      color?: number;
+      fields?: Array<{ name: string; value: string; inline?: boolean }>;
+      footer?: string;
+    }>;
+  }): Promise<ToolResult<{ id: string }>> {
+    try {
+      const url =
+        input.webhookUrl ??
+        (input.webhookId && input.token
+          ? `https://discord.com/api/v10/webhooks/${input.webhookId}/${input.token}`
+          : null);
+
+      if (!url) {
+        return errorResult(
+          "VALIDATION_ERROR",
+          "Provide webhookUrl or webhookId + token.",
+        );
+      }
+
+      const payload: Record<string, unknown> = {};
+      if (input.content !== undefined) payload.content = input.content;
+      if (input.username !== undefined) payload.username = input.username;
+      if (input.avatarUrl !== undefined) payload.avatar_url = input.avatarUrl;
+      if (input.embeds !== undefined) {
+        payload.embeds = input.embeds.map((embedData) => {
+          const embed = new EmbedBuilder();
+          if (embedData.title) embed.setTitle(embedData.title);
+          if (embedData.description)
+            embed.setDescription(embedData.description);
+          if (embedData.color !== undefined) embed.setColor(embedData.color);
+          if (embedData.fields) embed.addFields(embedData.fields);
+          if (embedData.footer) embed.setFooter({ text: embedData.footer });
+          return embed.toJSON();
+        });
+      }
+
+      const response = await fetch(`${url}?wait=true`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        return errorResult(
+          "UNKNOWN",
+          `Discord webhook error: ${response.status} - ${text}`,
+        );
+      }
+
+      const data = (await response.json()) as { id: string };
+      return successResult({ id: data.id });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Adds a reaction to a message. */
+  async addReaction(
+    guildId: string,
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<
+    ToolResult<{ messageId: string; emoji: string; action: "added" }>
+  > {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or is not text based.`,
+        );
+      }
+
+      const message = await (channel as TextChannel).messages.fetch(messageId);
+      await message.react(emoji);
+      return successResult({ messageId, emoji, action: "added" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Removes this bot's reaction from a message. */
+  async removeReaction(
+    guildId: string,
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<
+    ToolResult<{ messageId: string; emoji: string; action: "removed" }>
+  > {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or is not text based.`,
+        );
+      }
+
+      const message = await (channel as TextChannel).messages.fetch(messageId);
+      const reaction =
+        message.reactions.cache.get(emoji) ??
+        (await message.reactions
+          .resolve(emoji)
+          ?.fetch()
+          .catch(() => null));
+
+      if (!reaction) {
+        return errorResult(
+          "NOT_FOUND",
+          `Reaction ${emoji} not found on message ${messageId}.`,
+        );
+      }
+
+      await reaction.users.remove();
+      return successResult({ messageId, emoji, action: "removed" });
     } catch (err) {
       return mapDiscordError(err);
     }

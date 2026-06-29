@@ -11,12 +11,12 @@ import type { ToolResult } from "../../types/schemas.js";
 
 /** Wraps a tool handler with guild resolution and standardized error responses. */
 async function withGuild<T>(
-  action: (guildId: string) => Promise<ToolResult<T>>,
+  action: (guildId: string, pokeUserId: string) => Promise<ToolResult<T>>,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   try {
     const pokeUserId = getCurrentPokeUserId();
     const link = await resolveGuildForPokeUser(pokeUserId);
-    const result = await action(link.discord_guild_id);
+    const result = await action(link.discord_guild_id, pokeUserId);
     return { content: [{ type: "text", text: formatToolResult(result) }] };
   } catch (err) {
     if (err instanceof GuildResolverError) {
@@ -612,7 +612,199 @@ export function registerDiscordTools(server: McpServer): void {
         discordManager.sendComponentsV2Message(guildId, channelId, components),
       ),
   );
+
+  server.registerTool(
+    "create_automation_script",
+    {
+      description:
+        "Creates a database-driven automation script for the linked Discord server.",
+      inputSchema: {
+        eventType: z
+          .enum(["BUTTON_CLICK", "MESSAGE_CREATE", "GUILD_MEMBER_ADD"])
+          .describe("Automation event type"),
+        triggerId: z
+          .string()
+          .optional()
+          .describe(
+            "Trigger ID such as a button customId, channel ID, or * for wildcard",
+          ),
+        actions: z
+          .array(z.record(z.string(), z.unknown()))
+          .min(1)
+          .describe("Ordered automation actions JSON array"),
+      },
+    },
+    async ({ eventType, triggerId, actions }) =>
+      withGuild((guildId, pokeUserId) =>
+        discordManager.createAutomationScript(
+          guildId,
+          pokeUserId,
+          eventType,
+          triggerId,
+          actions,
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "list_automation_scripts",
+    {
+      description:
+        "Lists active automation scripts for the linked Discord server.",
+      inputSchema: {},
+    },
+    async () =>
+      withGuild((guildId, pokeUserId) =>
+        discordManager.listAutomationScripts(guildId, pokeUserId),
+      ),
+  );
+
+  server.registerTool(
+    "delete_automation_script",
+    {
+      description:
+        "Deletes an automation script owned by the current Poke user.",
+      inputSchema: {
+        scriptId: z.string().describe("Automation script ID to delete"),
+      },
+    },
+    async ({ scriptId }) =>
+      withGuild((guildId, pokeUserId) =>
+        discordManager.deleteAutomationScript(guildId, pokeUserId, scriptId),
+      ),
+  );
+
+  server.registerTool(
+    "edit_channel_permissions",
+    {
+      description: "Edits channel permission overwrites for a role or user.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        targetId: z
+          .string()
+          .describe("Role ID or user ID receiving the overwrite"),
+        permissions: z
+          .record(z.string(), z.boolean())
+          .describe(
+            "Permission overwrite map, e.g. { ViewChannel: true, SendMessages: false }",
+          ),
+      },
+    },
+    async ({ channelId, targetId, permissions }) =>
+      withGuild((guildId) =>
+        discordManager.editChannelPermissions(
+          guildId,
+          channelId,
+          targetId,
+          permissions,
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "create_webhook",
+    {
+      description:
+        "Creates a Discord webhook in a text channel and returns its id and URL.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        name: z.string().min(1).max(80).describe("Webhook name"),
+      },
+    },
+    async ({ channelId, name }) =>
+      withGuild((guildId) =>
+        discordManager.createWebhook(guildId, channelId, name),
+      ),
+  );
+
+  server.registerTool(
+    "execute_webhook",
+    {
+      description:
+        "Executes a Discord webhook using a webhook URL or webhook id + token.",
+      inputSchema: {
+        webhookUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe("Full Discord webhook URL"),
+        webhookId: z
+          .string()
+          .optional()
+          .describe("Webhook ID when not using webhookUrl"),
+        token: z
+          .string()
+          .optional()
+          .describe("Webhook token when not using webhookUrl"),
+        content: z.string().max(2000).optional().describe("Message content"),
+        username: z
+          .string()
+          .max(80)
+          .optional()
+          .describe("Override webhook username"),
+        avatarUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe("Override webhook avatar URL"),
+        embeds: z
+          .array(
+            z.object({
+              title: z.string().max(256).optional(),
+              description: z.string().max(4096).optional(),
+              color: z.number().int().min(0).max(0xffffff).optional(),
+              fields: z
+                .array(
+                  z.object({
+                    name: z.string().max(256),
+                    value: z.string().max(1024),
+                    inline: z.boolean().optional(),
+                  }),
+                )
+                .max(25)
+                .optional(),
+              footer: z.string().max(2048).optional(),
+            }),
+          )
+          .max(10)
+          .optional(),
+      },
+    },
+    async (input) => withGuild(() => discordManager.executeWebhook(input)),
+  );
+
+  server.registerTool(
+    "add_reaction",
+    {
+      description: "Adds a reaction to a message.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        messageId: z.string().describe("Discord message ID"),
+        emoji: z.string().describe("Unicode or custom emoji string"),
+      },
+    },
+    async ({ channelId, messageId, emoji }) =>
+      withGuild((guildId) =>
+        discordManager.addReaction(guildId, channelId, messageId, emoji),
+      ),
+  );
+
+  server.registerTool(
+    "remove_reaction",
+    {
+      description: "Removes the bot's reaction from a message.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        messageId: z.string().describe("Discord message ID"),
+        emoji: z.string().describe("Unicode or custom emoji string"),
+      },
+    },
+    async ({ channelId, messageId, emoji }) =>
+      withGuild((guildId) =>
+        discordManager.removeReaction(guildId, channelId, messageId, emoji),
+      ),
+  );
 }
 
 /** Tool count for startup logging. */
-export const TOOL_COUNT = 24;
+export const TOOL_COUNT = 32;

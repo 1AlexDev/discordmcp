@@ -97,6 +97,14 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 | `send_components_v2_message` | Send advanced layout Components V2 message |
 | `create_automod_rule` | Create an AutoMod rule |
 | `edit_role` | Update role name, color, and permissions |
+| `create_automation_script` | Create a database-driven automation script |
+| `list_automation_scripts` | List automation scripts for linked guild |
+| `delete_automation_script` | Delete an automation script |
+| `edit_channel_permissions` | Edit channel role/user permission overwrites |
+| `create_webhook` | Create a Discord webhook |
+| `execute_webhook` | Send a message through a webhook |
+| `add_reaction` | Add a reaction to a message |
+| `remove_reaction` | Remove the bot's reaction from a message |
 
 ---
 
@@ -125,10 +133,15 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 - [x] Rich messaging tools (`send_embed_message`, `send_component_message`)
 - [x] Advanced Moderation (`delete_message`, `edit_message`, `create_automod_rule`, `edit_role`, `create_category`)
 - [x] Components V2 Implementation (`send_components_v2_message`)
+- [x] Database-driven automation scripting tools (`create_automation_script`, `list_automation_scripts`, `delete_automation_script`)
+- [x] Advanced webhook, permission, and reaction tools (`edit_channel_permissions`, `create_webhook`, `execute_webhook`, `add_reaction`, `remove_reaction`)
 
 ### Phase 5 — Hardening & Deploy
 - [x] 1:many account-link architecture (`poke_user_id`, `discord_guild_id` unique pair)
 - [x] Dashboard API endpoint (`GET /api/user/servers`)
+- [x] Automation scripts schema (`automation_scripts`)
+- [x] Dynamic Discord event automation engine (`interactionCreate`, `messageCreate`, `guildMemberAdd`)
+- [x] Dashboard Script Management UI (`GET /api/servers/:guild_id/scripts`, `DELETE /api/scripts/:script_id`)
 - [x] Health check, README, logging
 - [x] **Unified single-port architecture** (OAuth + MCP on one Express server)
 - [x] **`render.yaml` blueprint** for one-click Render deploy

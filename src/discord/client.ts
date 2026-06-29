@@ -6,6 +6,7 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { env } from "../config/env.js";
+import { registerAutomationListeners } from "./automation-engine.js";
 
 let discordClient: Client | null = null;
 let readyPromise: Promise<Client> | null = null;
@@ -18,6 +19,7 @@ export function getDiscordClient(): Client {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
       ],
       partials: [Partials.Channel],
     });
@@ -36,6 +38,7 @@ export function waitForDiscordReady(): Promise<Client> {
   if (!readyPromise) {
     readyPromise = new Promise((resolve, reject) => {
       client.once("ready", () => {
+        registerAutomationListeners(client);
         console.log(`[discord] Bot logged in as ${client.user?.tag}`);
         resolve(client);
       });

@@ -1,6 +1,13 @@
 import { Router, type Request, type Response } from "express";
-import { getAccountLinksByPokeUserId } from "../../db/supabase.js";
+import {
+  deleteAutomationScript,
+  getAccountLinksByPokeUserId,
+  getAutomationScriptById,
+  getAutomationScriptsByGuild,
+  isGuildLinkedToPokeUser,
+} from "../../db/supabase.js";
 import { getDiscordClient, waitForDiscordReady } from "../../discord/client.js";
+import { invalidateAutomationCache } from "../../discord/automation-engine.js";
 import {
   clearPokeUserCookie,
   getPokeUserIdFromRequest,
@@ -139,10 +146,30 @@ function renderDashboardPage(pokeUserId: string): string {
         </div>
       </div>
     </section>
+
+    <section id="scripts-section" class="hidden border-t border-neutral-200 py-10">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Scripts & Automations</p>
+          <h2 id="scripts-title" class="mt-2 text-xl font-semibold tracking-[-0.03em]">Select a server</h2>
+          <p class="mt-2 text-sm text-neutral-600">Review active triggers and remove automation scripts instantly.</p>
+        </div>
+        <button id="close-scripts" class="text-sm font-medium text-neutral-500 transition-colors hover:text-neutral-950" type="button">Close</button>
+      </div>
+      <div id="scripts-list" class="mt-6 space-y-3"></div>
+    </section>
   </main>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 hidden -translate-x-1/2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-800"></div>
 
   <script>
     const grid = document.getElementById('server-grid');
+    const scriptsSection = document.getElementById('scripts-section');
+    const scriptsTitle = document.getElementById('scripts-title');
+    const scriptsList = document.getElementById('scripts-list');
+    const closeScripts = document.getElementById('close-scripts');
+    const toast = document.getElementById('toast');
+    let selectedGuildId = null;
 
     function formatNumber(value) {
       if (value === null || value === undefined) return '—';
@@ -160,6 +187,89 @@ function renderDashboardPage(pokeUserId: string): string {
 
     function initials(name) {
       return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'DS';
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.remove('hidden');
+      window.setTimeout(() => toast.classList.add('hidden'), 2200);
+    }
+
+    function summarizeActions(actions) {
+      if (!Array.isArray(actions) || !actions.length) return 'No actions';
+      return actions.map((action) => {
+        if (!action || typeof action !== 'object') return 'Unknown';
+        return String(action.type || 'Unknown').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+      }).join(' + ');
+    }
+
+    function triggerLabel(script) {
+      const event = String(script.event_type || '').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+      return event + (script.trigger_id ? ': ' + script.trigger_id : '');
+    }
+
+    function renderScript(script) {
+      return '<article id="script-' + escapeHtml(script.id) + '" class="rounded-2xl border border-neutral-200 bg-white p-4">'
+        + '<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">'
+        + '<div class="min-w-0">'
+        + '<p class="truncate text-sm font-semibold text-neutral-950">' + escapeHtml(triggerLabel(script)) + '</p>'
+        + '<p class="mt-1 truncate text-sm text-neutral-600">' + escapeHtml(summarizeActions(script.actions)) + '</p>'
+        + '<p class="mt-2 text-xs text-neutral-400">Script ID ' + escapeHtml(script.id) + '</p>'
+        + '</div>'
+        + '<button type="button" data-script-id="' + escapeHtml(script.id) + '" class="delete-script rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:border-red-300 hover:text-red-700">Delete</button>'
+        + '</div>'
+        + '</article>';
+    }
+
+    async function loadScripts(guildId, guildName) {
+      selectedGuildId = guildId;
+      scriptsSection.classList.remove('hidden');
+      scriptsTitle.textContent = 'Scripts for ' + guildName;
+      scriptsList.innerHTML = '<div class="rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-500">Loading scripts…</div>';
+      scriptsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      try {
+        const response = await fetch('/api/servers/' + encodeURIComponent(guildId) + '/scripts', { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Failed to load scripts');
+        const payload = await response.json();
+
+        if (!payload.scripts.length) {
+          scriptsList.innerHTML = '<div class="rounded-2xl border border-neutral-200 bg-white p-8 text-center">'
+            + '<h3 class="text-base font-semibold text-neutral-950">No scripts yet</h3>'
+            + '<p class="mx-auto mt-2 max-w-md text-sm leading-6 text-neutral-600">Use Poke to create automation scripts for buttons, messages, and member joins.</p>'
+            + '</div>';
+          return;
+        }
+
+        scriptsList.innerHTML = payload.scripts.map(renderScript).join('');
+      } catch (error) {
+        scriptsList.innerHTML = '<div class="rounded-2xl border border-red-200 bg-white p-8 text-center">'
+          + '<h3 class="text-base font-semibold text-neutral-950">Could not load scripts</h3>'
+          + '<p class="mt-2 text-sm text-neutral-600">Refresh the page and try again.</p>'
+          + '</div>';
+      }
+    }
+
+    async function deleteScript(scriptId) {
+      const node = document.getElementById('script-' + scriptId);
+      if (node) node.classList.add('opacity-50');
+
+      try {
+        const response = await fetch('/api/scripts/' + encodeURIComponent(scriptId), {
+          method: 'DELETE',
+          credentials: 'same-origin'
+        });
+        if (!response.ok) throw new Error('Failed to delete script');
+
+        if (node) node.remove();
+        showToast('Script deleted');
+        if (!scriptsList.children.length && selectedGuildId) {
+          scriptsList.innerHTML = '<div class="rounded-2xl border border-neutral-200 bg-white p-8 text-center"><h3 class="text-base font-semibold text-neutral-950">No scripts yet</h3></div>';
+        }
+      } catch (error) {
+        if (node) node.classList.remove('opacity-50');
+        showToast('Could not delete script');
+      }
     }
 
     function renderServer(server, index) {
@@ -183,6 +293,7 @@ function renderDashboardPage(pokeUserId: string): string {
         + '<div><p class="text-xs text-neutral-500">Members</p><p class="mt-1 text-sm font-semibold text-neutral-950">' + formatNumber(server.memberCount) + '</p></div>'
         + '<div><p class="text-xs text-neutral-500">Channels</p><p class="mt-1 text-sm font-semibold text-neutral-950">' + formatNumber(server.channelCount) + '</p></div>'
         + '</div>'
+        + '<button type="button" data-guild-id="' + safeId + '" data-guild-name="' + safeName + '" class="manage-scripts mt-5 w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold text-neutral-800 transition-colors hover:border-neutral-950">Manage scripts</button>'
         + '</article>';
     }
 
@@ -206,6 +317,11 @@ function renderDashboardPage(pokeUserId: string): string {
         }
 
         grid.innerHTML = payload.servers.map(renderServer).join('');
+        grid.querySelectorAll('.manage-scripts').forEach((button) => {
+          button.addEventListener('click', () => {
+            loadScripts(button.dataset.guildId, button.dataset.guildName);
+          });
+        });
       } catch (error) {
         grid.innerHTML = '<div class="col-span-full rounded-2xl border border-red-200 bg-white p-8 text-center">'
           + '<h3 class="text-base font-semibold text-neutral-950">Could not load servers</h3>'
@@ -213,6 +329,18 @@ function renderDashboardPage(pokeUserId: string): string {
           + '</div>';
       }
     }
+
+    scriptsList.addEventListener('click', (event) => {
+      const button = event.target.closest('.delete-script');
+      if (!button) return;
+      deleteScript(button.dataset.scriptId);
+    });
+
+    closeScripts.addEventListener('click', () => {
+      selectedGuildId = null;
+      scriptsSection.classList.add('hidden');
+      scriptsList.innerHTML = '';
+    });
 
     loadServers();
   </script>
@@ -257,3 +385,66 @@ userApiRouter.get("/user/servers", async (req: Request, res: Response) => {
     });
   }
 });
+
+userApiRouter.get(
+  "/servers/:guild_id/scripts",
+  async (req: Request, res: Response) => {
+    const pokeUserId = getPokeUserIdFromRequest(req);
+    if (!pokeUserId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const guildId = String(req.params.guild_id);
+
+    try {
+      const linked = await isGuildLinkedToPokeUser(pokeUserId, guildId);
+      if (!linked) {
+        res
+          .status(403)
+          .json({ error: "Server is not linked to this Poke user" });
+        return;
+      }
+
+      const scripts = await getAutomationScriptsByGuild(pokeUserId, guildId);
+      res.json({ guildId, scripts });
+    } catch (err) {
+      console.error("[dashboard] Failed to fetch scripts:", err);
+      res.status(500).json({
+        error: "Failed to load scripts",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+);
+
+userApiRouter.delete(
+  "/scripts/:script_id",
+  async (req: Request, res: Response) => {
+    const pokeUserId = getPokeUserIdFromRequest(req);
+    if (!pokeUserId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const scriptId = String(req.params.script_id);
+
+    try {
+      const script = await getAutomationScriptById(scriptId);
+      if (!script || script.poke_user_id !== pokeUserId) {
+        res.status(404).json({ error: "Script not found" });
+        return;
+      }
+
+      await deleteAutomationScript(scriptId, pokeUserId);
+      invalidateAutomationCache();
+      res.json({ id: scriptId, deleted: true });
+    } catch (err) {
+      console.error("[dashboard] Failed to delete script:", err);
+      res.status(500).json({
+        error: "Failed to delete script",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+);
