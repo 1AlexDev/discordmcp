@@ -11,7 +11,7 @@ Build a **custom Model Context Protocol (MCP) server** that lets the **Poke AI**
 
 1. Invite our Discord bot to their server.
 2. Link their Poke account to the Discord MCP service via OAuth2.
-3. Use MCP tools (with `pokeUserId`) to perform server actions scoped to their linked guild.
+3. Use MCP tools to perform server actions scoped to their linked guild; Poke identity is injected through request headers.
 
 ---
 
@@ -65,7 +65,9 @@ See [README.md](README.md) and [render.yaml](render.yaml) for deployment.
 
 ## MCP Tools (v1)
 
-Every tool **requires** `pokeUserId: string`.
+Tool schemas do **not** expose `pokeUserId`. Poke sends `X-Poke-User-Id` on each `/mcp` request, and the Express transport layer stores it in `AsyncLocalStorage` so tool handlers can resolve the linked Discord guild transparently.
+
+The service is public and multi-tenant. User isolation is based on the Poke user ID from the request context plus the Supabase `poke_user_id` to `discord_guild_id` mapping. If no mapping exists, the tool returns `NOT_LINKED`.
 
 | Tool | Description |
 |------|-------------|
@@ -108,7 +110,7 @@ Every tool **requires** `pokeUserId: string`.
 
 ## Current Progress
 
-**Status:** Production-ready for Render. Unified server on single `PORT`; deploy via `render.yaml`.
+**Status:** Production-ready for Render. Unified server on single `PORT`; deploy via `render.yaml`. MCP identity is request-scoped through Poke headers instead of manual tool parameters.
 
 **Next step:** Deploy to Render, set `BASE_URL` to Render URL, configure Poke Recipe Server URL to `{BASE_URL}/mcp`, run OAuth linking E2E test.
 
@@ -118,6 +120,6 @@ Every tool **requires** `pokeUserId: string`.
 
 1. **Always read this file first** before making changes.
 2. Do **not** reintroduce a separate MCP port — Render exposes one port per web service.
-3. Every MCP tool must accept `pokeUserId` and resolve guild via Supabase.
+3. Do **not** add `pokeUserId` to MCP tool schemas. Resolve it from the `X-Poke-User-Id` request context and then query Supabase.
 4. `BASE_URL` drives OAuth links, redirect URI derivation, and Poke MCP Server URL.
 5. Never log or commit secrets.

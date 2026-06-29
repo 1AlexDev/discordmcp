@@ -3,14 +3,15 @@ import { z } from "zod";
 import { resolveGuildForPokeUser, GuildResolverError } from "../../db/guild-resolver.js";
 import { discordManager } from "../../discord/DiscordManager.js";
 import { formatToolResult, errorResult } from "../errors.js";
+import { getCurrentPokeUserId } from "../request-context.js";
 import type { ToolResult } from "../../types/schemas.js";
 
 /** Wraps a tool handler with guild resolution and standardized error responses. */
 async function withGuild<T>(
-  pokeUserId: string,
   action: (guildId: string) => Promise<ToolResult<T>>
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   try {
+    const pokeUserId = getCurrentPokeUserId();
     const link = await resolveGuildForPokeUser(pokeUserId);
     const result = await action(link.discord_guild_id);
     return { content: [{ type: "text", text: formatToolResult(result) }] };
@@ -43,13 +44,10 @@ export function registerDiscordTools(server: McpServer): void {
     "list_channels",
     {
       description:
-        "Returns a list of channels in the Discord server linked to the given Poke user.",
-      inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to query"),
-      },
+        "Returns a list of channels in the Discord server linked to the current Poke user.",
+      inputSchema: {},
     },
-    async ({ pokeUserId }) =>
-      withGuild(pokeUserId, (guildId) => discordManager.listChannels(guildId))
+    async () => withGuild((guildId) => discordManager.listChannels(guildId))
   );
 
   server.registerTool(
@@ -57,15 +55,12 @@ export function registerDiscordTools(server: McpServer): void {
     {
       description: "Sends a message to a specific text channel in the linked Discord server.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         channelId: z.string().describe("Discord channel ID to send the message to"),
         content: z.string().max(2000).describe("Message content (max 2000 characters)"),
       },
     },
-    async ({ pokeUserId, channelId, content }) =>
-      withGuild(pokeUserId, (guildId) =>
-        discordManager.sendMessage(guildId, channelId, content)
-      )
+    async ({ channelId, content }) =>
+      withGuild((guildId) => discordManager.sendMessage(guildId, channelId, content))
   );
 
   server.registerTool(
@@ -73,7 +68,6 @@ export function registerDiscordTools(server: McpServer): void {
     {
       description: "Creates a new text or voice channel in the linked Discord server.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         name: z.string().max(100).describe("Channel name"),
         type: z.enum(["text", "voice"]).describe("Channel type: text or voice"),
         parentId: z
@@ -82,10 +76,8 @@ export function registerDiscordTools(server: McpServer): void {
           .describe("Optional category (parent channel) ID"),
       },
     },
-    async ({ pokeUserId, name, type, parentId }) =>
-      withGuild(pokeUserId, (guildId) =>
-        discordManager.createChannel(guildId, name, type, parentId)
-      )
+    async ({ name, type, parentId }) =>
+      withGuild((guildId) => discordManager.createChannel(guildId, name, type, parentId))
   );
 
   server.registerTool(
@@ -93,15 +85,12 @@ export function registerDiscordTools(server: McpServer): void {
     {
       description: "Kicks a user from the linked Discord server by their user ID.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         userId: z.string().describe("Discord user ID to kick"),
         reason: z.string().max(512).optional().describe("Optional kick reason"),
       },
     },
-    async ({ pokeUserId, userId, reason }) =>
-      withGuild(pokeUserId, (guildId) =>
-        discordManager.kickUser(guildId, userId, reason)
-      )
+    async ({ userId, reason }) =>
+      withGuild((guildId) => discordManager.kickUser(guildId, userId, reason))
   );
 
   server.registerTool(
@@ -109,7 +98,6 @@ export function registerDiscordTools(server: McpServer): void {
     {
       description: "Bans a user from the linked Discord server by their user ID.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         userId: z.string().describe("Discord user ID to ban"),
         reason: z.string().max(512).optional().describe("Optional ban reason"),
         deleteMessageDays: z
@@ -121,8 +109,8 @@ export function registerDiscordTools(server: McpServer): void {
           .describe("Number of days of messages to delete (0-7)"),
       },
     },
-    async ({ pokeUserId, userId, reason, deleteMessageDays }) =>
-      withGuild(pokeUserId, (guildId) =>
+    async ({ userId, reason, deleteMessageDays }) =>
+      withGuild((guildId) =>
         discordManager.banUser(guildId, userId, reason, deleteMessageDays)
       )
   );
@@ -133,7 +121,6 @@ export function registerDiscordTools(server: McpServer): void {
       description:
         "Creates a new role in the linked Discord server with optional color and permissions.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         name: z.string().max(100).describe("Role name"),
         color: z
           .number()
@@ -148,10 +135,8 @@ export function registerDiscordTools(server: McpServer): void {
           .describe("Permission bitfield as a string (Discord permissions integer)"),
       },
     },
-    async ({ pokeUserId, name, color, permissions }) =>
-      withGuild(pokeUserId, (guildId) =>
-        discordManager.createRole(guildId, name, color, permissions)
-      )
+    async ({ name, color, permissions }) =>
+      withGuild((guildId) => discordManager.createRole(guildId, name, color, permissions))
   );
 
   server.registerTool(
@@ -159,15 +144,12 @@ export function registerDiscordTools(server: McpServer): void {
     {
       description: "Assigns a role to a user in the linked Discord server.",
       inputSchema: {
-        pokeUserId: z.string().describe("The Poke user ID whose linked Discord server to use"),
         userId: z.string().describe("Discord user ID to receive the role"),
         roleId: z.string().describe("Discord role ID to assign"),
       },
     },
-    async ({ pokeUserId, userId, roleId }) =>
-      withGuild(pokeUserId, (guildId) =>
-        discordManager.assignRole(guildId, userId, roleId)
-      )
+    async ({ userId, roleId }) =>
+      withGuild((guildId) => discordManager.assignRole(guildId, userId, roleId))
   );
 }
 

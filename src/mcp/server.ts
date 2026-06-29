@@ -1,8 +1,9 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { env } from "../config/env.js";
+import { runWithMcpRequestContext } from "./request-context.js";
 import { registerDiscordTools, TOOL_COUNT } from "./tools/index.js";
 
 /** Creates a configured MCP server with all Discord tools registered. */
@@ -19,19 +20,33 @@ export function createMcpServer(): McpServer {
   return server;
 }
 
+function getPokeUserId(req: Request): string | null {
+  const header = req.get("x-poke-user-id");
+  const pokeUserId = header?.trim();
+  return pokeUserId ? pokeUserId : null;
+}
+
 /**
  * Mounts Streamable HTTP MCP routes on an existing Express app.
  * POST /mcp handles JSON-RPC; used as the Poke Recipe "Server URL" SSE endpoint.
  */
 export function registerMcpHttpRoutes(app: Express): void {
   app.post("/mcp", async (req, res) => {
+    const pokeUserId = getPokeUserId(req);
+    if (!pokeUserId) {
+      res.status(400).json({ error: "Missing X-Poke-User-Id header" });
+      return;
+    }
+
     const server = createMcpServer();
     try {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await runWithMcpRequestContext({ pokeUserId }, () =>
+        transport.handleRequest(req, res, req.body)
+      );
 
       res.on("close", () => {
         void transport.close();
