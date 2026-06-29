@@ -25,6 +25,14 @@ const scriptCache = new Map<
   { expiresAt: number; scripts: AutomationScript[] }
 >();
 
+/** SSE Stream for Interaction Events */
+export const interactionStream = {
+  listeners: new Set<(event: any) => void>(),
+  push(event: any) {
+    this.listeners.forEach(l => l(event));
+  }
+};
+
 function cacheKey(guildId: string, eventType: string, triggerId: string | null): string {
   return `${guildId}:${eventType}:${triggerId ?? ""}`;
 }
@@ -231,7 +239,7 @@ async function executeAction(
   }
 }
 
-async function executeScripts(
+export async function executeScripts(
   scripts: AutomationScript[],
   context: {
     client: Client;
@@ -271,6 +279,15 @@ export function registerAutomationListeners(client: Client): void {
   client.on("interactionCreate", async (interaction) => {
     if (!interaction.guildId) return;
 
+    interactionStream.push({
+      type: "interaction",
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      user: { id: interaction.user.id, username: interaction.user.username },
+      interactionType: interaction.type,
+      customId: (interaction as any).customId || null,
+    });
+
     if (interaction.isButton()) {
       try {
         const scripts = await getScriptsForEvent(
@@ -280,7 +297,6 @@ export function registerAutomationListeners(client: Client): void {
         );
         if (!scripts.length) return;
 
-        // Check if any script has a SHOW_MODAL action. If so, we don't deferUpdate.
         const hasModal = scripts.some(s => s.actions.some((a: any) => a.type === "SHOW_MODAL"));
 
         if (!hasModal && !interaction.deferred && !interaction.replied) {
