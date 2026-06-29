@@ -1,0 +1,58 @@
+import express, { type Express, type Request, type Response } from "express";
+import { authRouter } from "./routes/auth.js";
+import { callbackRouter } from "./routes/callback.js";
+import { registerMcpHttpRoutes } from "../mcp/server.js";
+import { env } from "../config/env.js";
+
+/**
+ * Creates the unified Express application.
+ * Serves OAuth linking, health checks, and (when MCP_TRANSPORT=sse) the MCP /mcp endpoint
+ * on a single port — required for Render and Poke Recipe "Server URL" integration.
+ */
+export function createApp(): Express {
+  const app = express();
+
+  app.use(express.json());
+
+  app.get("/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      service: "poke-discord-mcp",
+      mcpTransport: env.MCP_TRANSPORT,
+      mcpEndpoint: env.MCP_TRANSPORT === "sse" ? "/mcp" : null,
+    });
+  });
+
+  app.use("/auth", authRouter);
+  app.use("/callback", callbackRouter);
+
+  if (env.MCP_TRANSPORT === "sse") {
+    registerMcpHttpRoutes(app);
+  }
+
+  return app;
+}
+
+/** @deprecated Use createApp() — kept for backward compatibility. */
+export function createApiServer(): Express {
+  return createApp();
+}
+
+/** Starts the unified HTTP server on the configured port. */
+export function startHttpServer(app: Express, port: number): void {
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`[server] Listening on 0.0.0.0:${port}`);
+    console.log(`[server] Public base URL: ${env.BASE_URL}`);
+    console.log(`[server] OAuth link: ${env.BASE_URL}/auth?poke_user_id=<id>`);
+    console.log(`[server] OAuth callback: ${env.BASE_URL}/callback`);
+
+    if (env.MCP_TRANSPORT === "sse") {
+      console.log(`[server] MCP endpoint: ${env.BASE_URL}/mcp`);
+    }
+  });
+}
+
+/** Generic 404 handler — attach after all routes if needed. */
+export function notFoundHandler(_req: Request, res: Response): void {
+  res.status(404).json({ error: "Not found" });
+}

@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: poke-discord-mcp
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MCP_TRANSPORT
+        value: sse
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: OAUTH_STATE_SECRET
+        sync: false
+      # Optional — omit to auto-derive as {BASE_URL}/callback
+      - key: DISCORD_REDIRECT_URI
+        sync: false
