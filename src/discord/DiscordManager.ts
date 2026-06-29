@@ -10,6 +10,7 @@ import {
   ButtonStyle,
   StringSelectMenuOptionBuilder,
 } from "discord.js";
+import { env } from "../config/env.js";
 import {
   getDiscordClient,
   waitForDiscordReady,
@@ -692,6 +693,280 @@ export class DiscordManager {
       // Return in chronological order (oldest first)
       summaries.reverse();
       return successResult(summaries);
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Edits an existing role. */
+  async editRole(
+    guildId: string,
+    roleId: string,
+    options: {
+      name?: string;
+      color?: number;
+      hoist?: boolean;
+      mentionable?: boolean;
+      permissions?: string[];
+    },
+  ): Promise<ToolResult<RoleSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const role = await guild.roles.fetch(roleId);
+
+      if (!role) {
+        return errorResult("NOT_FOUND", `Role ${roleId} not found.`);
+      }
+
+      const updateData: any = {};
+      if (options.name !== undefined) updateData.name = options.name;
+      if (options.color !== undefined) updateData.color = options.color;
+      if (options.hoist !== undefined) updateData.hoist = options.hoist;
+      if (options.mentionable !== undefined)
+        updateData.mentionable = options.mentionable;
+      if (options.permissions !== undefined) {
+        updateData.permissions = new PermissionsBitField(
+          options.permissions as any,
+        );
+      }
+
+      updateData.reason = "Edited via Poke Discord MCP";
+      const updated = await role.edit(updateData);
+
+      return successResult({
+        id: updated.id,
+        name: updated.name,
+        color: updated.color,
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Creates a new category channel. */
+  async createCategory(
+    guildId: string,
+    name: string,
+    position?: number,
+  ): Promise<ToolResult<ChannelSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.create({
+        name,
+        type: ChannelType.GuildCategory,
+        position,
+      });
+
+      return successResult({
+        id: channel.id,
+        name: channel.name,
+        type: ChannelTypeLabel(channel.type),
+        parentId: channel.parentId,
+        position: getChannelPosition(channel as any),
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Deletes a specific message. */
+  async deleteMessage(
+    guildId: string,
+    channelId: string,
+    messageId: string,
+  ): Promise<ToolResult<{ id: string; action: "deleted" }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or is not a text channel.`,
+        );
+      }
+
+      const textChannel = channel as TextChannel;
+      const message = await textChannel.messages.fetch(messageId);
+
+      if (!message) {
+        return errorResult("NOT_FOUND", `Message ${messageId} not found.`);
+      }
+
+      await message.delete();
+      return successResult({ id: messageId, action: "deleted" });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Edits a specific message. */
+  async editMessage(
+    guildId: string,
+    channelId: string,
+    messageId: string,
+    options: {
+      content?: string;
+      embeds?: Array<{
+        title?: string;
+        description?: string;
+        color?: number;
+        fields?: Array<{ name: string; value: string; inline?: boolean }>;
+        footer?: string;
+      }>;
+    },
+  ): Promise<ToolResult<MessageSummary>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or is not a text channel.`,
+        );
+      }
+
+      const textChannel = channel as TextChannel;
+      const message = await textChannel.messages.fetch(messageId);
+
+      if (!message) {
+        return errorResult("NOT_FOUND", `Message ${messageId} not found.`);
+      }
+
+      const updateData: any = {};
+      if (options.content !== undefined) updateData.content = options.content;
+
+      if (options.embeds !== undefined) {
+        updateData.embeds = options.embeds.map((embedData) => {
+          const embed = new EmbedBuilder();
+          if (embedData.title) embed.setTitle(embedData.title);
+          if (embedData.description)
+            embed.setDescription(embedData.description);
+          if (embedData.color !== undefined) embed.setColor(embedData.color);
+          if (embedData.fields) embed.addFields(embedData.fields);
+          if (embedData.footer) embed.setFooter({ text: embedData.footer });
+          return embed;
+        });
+      }
+
+      const updated = await message.edit(updateData);
+
+      return successResult({
+        id: updated.id,
+        channelId: updated.channelId,
+        content: updated.content,
+        author: updated.author.username,
+        authorId: updated.author.id,
+        timestamp: updated.createdAt.toISOString(),
+      });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Creates an AutoMod rule. */
+  async createAutoModRule(
+    guildId: string,
+    name: string,
+    eventType: number,
+    triggerType: number,
+    keywordFilters: string[],
+    actions: Array<{
+      type: number;
+      channelId?: string;
+      customMessage?: string;
+      durationSeconds?: number;
+    }>,
+  ): Promise<ToolResult<{ id: string; name: string }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+
+      const rule = await guild.autoModerationRules.create({
+        name,
+        eventType: eventType,
+        triggerType: triggerType,
+        triggerMetadata: {
+          keywordFilter: keywordFilters,
+        },
+        actions: actions.map((a) => ({
+          type: a.type,
+          metadata: {
+            channel: a.channelId,
+            customMessage: a.customMessage,
+            durationSeconds: a.durationSeconds,
+          },
+        })),
+        enabled: true,
+        reason: "Created via Poke Discord MCP",
+      });
+
+      return successResult({ id: rule.id, name: rule.name });
+    } catch (err) {
+      return mapDiscordError(err);
+    }
+  }
+
+  /** Sends a Components V2 message using the Discord REST API directly. */
+  async sendComponentsV2Message(
+    guildId: string,
+    channelId: string,
+    components: any[],
+  ): Promise<ToolResult<{ id: string }>> {
+    try {
+      const guildOrError = await this.getGuild(guildId);
+      if (this.isErrorResult(guildOrError)) return guildOrError;
+
+      const guild = guildOrError;
+      const channel = await guild.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return errorResult(
+          "NOT_FOUND",
+          `Channel ${channelId} not found or is not a text channel.`,
+        );
+      }
+
+      const response = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bot ${env.DISCORD_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            flags: 32768, // IS_COMPONENTS_V2 (1 << 15)
+            components: components,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        return errorResult(
+          "UNKNOWN",
+          `Discord API error: ${response.status} - ${text}`,
+        );
+      }
+
+      const data = (await response.json()) as any;
+      return successResult({ id: data.id });
     } catch (err) {
       return mapDiscordError(err);
     }

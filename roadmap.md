@@ -85,12 +85,18 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 | `read_messages` | Read recent messages from a channel |
 | `get_server_info` | High-level server statistics |
 | `get_categories` | List all categories |
+| `create_category`| Create a category |
 | `delete_category` | Delete a category |
 | `get_channel` | Fetch detailed channel info |
 | `delete_channel` | Delete a channel |
 | `update_channel` | Update channel name, topic, or parent |
+| `delete_message` | Delete a message |
+| `edit_message` | Edit an existing message |
 | `send_embed_message`| Send a rich embed message |
 | `send_component_message` | Send message with buttons/select menus |
+| `send_components_v2_message` | Send advanced layout Components V2 message |
+| `create_automod_rule` | Create an AutoMod rule |
+| `edit_role` | Update role name, color, and permissions |
 
 ---
 
@@ -117,6 +123,8 @@ The service is public and multi-tenant. User isolation is based on the Poke user
 - [x] New read-only data fetching tools (`get_users`, `get_roles`, `read_messages`, `get_server_info`)
 - [x] Advanced management tools (`get_categories`, `delete_category`, `get_channel`, `delete_channel`, `update_channel`)
 - [x] Rich messaging tools (`send_embed_message`, `send_component_message`)
+- [x] Advanced Moderation (`delete_message`, `edit_message`, `create_automod_rule`, `edit_role`, `create_category`)
+- [x] Components V2 Implementation (`send_components_v2_message`)
 
 ### Phase 5 — Hardening & Deploy
 - [x] 1:many account-link architecture (`poke_user_id`, `discord_guild_id` unique pair)

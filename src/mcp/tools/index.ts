@@ -420,7 +420,199 @@ export function registerDiscordTools(server: McpServer): void {
         ),
       ),
   );
+  server.registerTool(
+    "edit_role",
+    {
+      description: "Edits an existing role in the linked Discord server.",
+      inputSchema: {
+        roleId: z.string().describe("Discord role ID to edit"),
+        name: z.string().max(100).optional().describe("New role name"),
+        color: z
+          .number()
+          .int()
+          .min(0)
+          .max(0xffffff)
+          .optional()
+          .describe("New role color as decimal RGB"),
+        hoist: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether the role should be displayed separately in the sidebar",
+          ),
+        mentionable: z
+          .boolean()
+          .optional()
+          .describe("Whether the role should be mentionable"),
+        permissions: z
+          .array(z.string())
+          .optional()
+          .describe("Array of permission strings to grant/deny"),
+      },
+    },
+    async ({ roleId, ...options }) =>
+      withGuild((guildId) => discordManager.editRole(guildId, roleId, options)),
+  );
+
+  server.registerTool(
+    "create_category",
+    {
+      description:
+        "Creates a new category channel in the linked Discord server.",
+      inputSchema: {
+        name: z.string().max(100).describe("Category name"),
+        position: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Optional sort position"),
+      },
+    },
+    async ({ name, position }) =>
+      withGuild((guildId) =>
+        discordManager.createCategory(guildId, name, position),
+      ),
+  );
+
+  server.registerTool(
+    "delete_message",
+    {
+      description: "Deletes a specific message in the linked Discord server.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        messageId: z.string().describe("Discord message ID to delete"),
+      },
+    },
+    async ({ channelId, messageId }) =>
+      withGuild((guildId) =>
+        discordManager.deleteMessage(guildId, channelId, messageId),
+      ),
+  );
+
+  server.registerTool(
+    "edit_message",
+    {
+      description:
+        "Edits a specific message sent by the bot in the linked Discord server.",
+      inputSchema: {
+        channelId: z.string().describe("Discord channel ID"),
+        messageId: z.string().describe("Discord message ID to edit"),
+        content: z.string().max(2000).optional().describe("New text content"),
+        embeds: z
+          .array(
+            z.object({
+              title: z.string().max(256).optional(),
+              description: z.string().max(4096).optional(),
+              color: z.number().int().min(0).max(0xffffff).optional(),
+              fields: z
+                .array(
+                  z.object({
+                    name: z.string().max(256),
+                    value: z.string().max(1024),
+                    inline: z.boolean().optional(),
+                  }),
+                )
+                .max(25)
+                .optional(),
+              footer: z.string().max(2048).optional(),
+            }),
+          )
+          .max(10)
+          .optional()
+          .describe("New embeds"),
+      },
+    },
+    async ({ channelId, messageId, ...options }) =>
+      withGuild((guildId) =>
+        discordManager.editMessage(guildId, channelId, messageId, options),
+      ),
+  );
+
+  server.registerTool(
+    "create_automod_rule",
+    {
+      description: "Creates a new AutoMod rule in the linked Discord server.",
+      inputSchema: {
+        name: z.string().max(100).describe("Rule name"),
+        eventType: z
+          .number()
+          .int()
+          .describe("Event type (e.g., 1 for MESSAGE_SEND)"),
+        triggerType: z
+          .number()
+          .int()
+          .describe("Trigger type (e.g., 1 for KEYWORD)"),
+        keywordFilters: z
+          .array(z.string().max(60))
+          .min(1)
+          .max(1000)
+          .describe("Array of keywords to block"),
+        actions: z
+          .array(
+            z.object({
+              type: z
+                .number()
+                .int()
+                .describe(
+                  "Action type (1: BLOCK_MESSAGE, 2: SEND_ALERT_MESSAGE, 3: TIMEOUT)",
+                ),
+              channelId: z
+                .string()
+                .optional()
+                .describe("Channel ID for SEND_ALERT_MESSAGE"),
+              customMessage: z
+                .string()
+                .max(150)
+                .optional()
+                .describe("Custom message for BLOCK_MESSAGE"),
+              durationSeconds: z
+                .number()
+                .int()
+                .max(2419200)
+                .optional()
+                .describe("Timeout duration for TIMEOUT action"),
+            }),
+          )
+          .max(5)
+          .describe("Actions to perform when triggered"),
+      },
+    },
+    async ({ name, eventType, triggerType, keywordFilters, actions }) =>
+      withGuild((guildId) =>
+        discordManager.createAutoModRule(
+          guildId,
+          name,
+          eventType,
+          triggerType,
+          keywordFilters,
+          actions,
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "send_components_v2_message",
+    {
+      description:
+        "Sends a modern Components V2 message (advanced layouts) to a specific text channel.",
+      inputSchema: {
+        channelId: z
+          .string()
+          .describe("Discord channel ID to send the components to"),
+        components: z
+          .array(z.record(z.string(), z.unknown()))
+          .describe(
+            "Array of raw Component V2 JSON objects (e.g. type 17 Container, type 10 TextDisplay, etc.)",
+          ),
+      },
+    },
+    async ({ channelId, components }) =>
+      withGuild((guildId) =>
+        discordManager.sendComponentsV2Message(guildId, channelId, components),
+      ),
+  );
 }
 
 /** Tool count for startup logging. */
-export const TOOL_COUNT = 18;
+export const TOOL_COUNT = 24;
