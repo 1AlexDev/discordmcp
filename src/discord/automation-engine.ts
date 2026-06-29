@@ -93,18 +93,19 @@ async function executeAction(
 
   switch (action.type) {
     case "SEND_MESSAGE": {
-      const channelId = typeof action.channel_id === "string" ? action.channel_id : null;
+      const channelId = typeof action.channel_id === "string" ? action.channel_id : (context.interaction?.channelId || context.message?.channelId);
       const content = typeof action.content === "string" ? action.content : undefined;
-      if (!channelId || !content) return;
+      const components = Array.isArray(action.components) ? action.components : undefined;
+      if (!channelId || (!content && !components)) return;
 
       const channel = await context.client.channels.fetch(channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) return;
-      await (channel as TextChannel).send({ content });
+      await (channel as TextChannel).send({ content, components: components as any });
       return;
     }
 
     case "SEND_EMBED": {
-      const channelId = typeof action.channel_id === "string" ? action.channel_id : null;
+      const channelId = typeof action.channel_id === "string" ? action.channel_id : (context.interaction?.channelId || context.message?.channelId);
       const embedData = isRecord(action.embed) ? action.embed : null;
       if (!channelId || !embedData) return;
 
@@ -150,9 +151,23 @@ async function executeAction(
         parent: typeof action.parent_id === "string" ? action.parent_id : undefined,
       });
 
-      if (typeof action.initial_message === "string" && channel.isTextBased()) {
-        await channel.send({ content: action.initial_message });
+      if (channel.isTextBased()) {
+        const content = typeof action.initial_message === "string" ? action.initial_message : undefined;
+        const components = Array.isArray(action.components) ? action.components : undefined;
+        if (content || components) {
+          await channel.send({ content, components: components as any });
+        }
       }
+      return;
+    }
+
+    case "DELETE_CHANNEL": {
+      const channelId = typeof action.channel_id === "string" ? action.channel_id : context.interaction?.channelId;
+      if (!channelId) return;
+
+      const channel = await context.client.channels.fetch(channelId).catch(() => null);
+      if (!channel) return;
+      await channel.delete(`Automation script ${script.id}`);
       return;
     }
 
