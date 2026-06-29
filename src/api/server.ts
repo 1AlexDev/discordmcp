@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response } from "express";
 import { authRouter } from "./routes/auth.js";
 import { callbackRouter } from "./routes/callback.js";
 import { dashboardRouter, userApiRouter } from "./routes/dashboard.js";
+import { webhookRouter } from "./routes/webhook.js";
 import { registerMcpHttpRoutes } from "../mcp/server.js";
 import { env } from "../config/env.js";
 
@@ -28,6 +29,7 @@ export function createApp(): Express {
   app.use("/callback", callbackRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/api", userApiRouter);
+  app.use("/webhook", webhookRouter);
 
   if (env.MCP_TRANSPORT === "sse") {
     registerMcpHttpRoutes(app);
