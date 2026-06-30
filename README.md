@@ -1,11 +1,12 @@
 # Poke Discord MCP
 
-Custom [Model Context Protocol](https://modelcontextprotocol.io/) server that lets the **Poke AI** manage a user's Discord server after OAuth linking.
+Custom [Model Context Protocol](https://modelcontextprotocol.io/) server that lets **Poke, Claude, ChatGPT, and other MCP clients** manage a user's Discord server after OAuth linking.
 
 ## Features
 
 - **Unified HTTP server** — OAuth, health, and MCP on a **single port** (Render-compatible)
 - **OAuth account linking** — Connect a Poke user to a Discord guild via `/auth`
+- **MCP OAuth 2.1** — AI clients can connect to `/mcp` with authorization-code + PKCE, dynamic client registration, and bearer tokens
 - **Discord bot** — Executes all actions through `discord.js` in the same process
 - **7 MCP tools** — Channels, messages, roles, kicks, bans (all scoped by `pokeUserId`)
 - **Supabase storage** — Persists `poke_user_id` ↔ `discord_guild_id` mappings
@@ -17,7 +18,9 @@ Single process on PORT (Render-injected or 3000 locally)
 ├── GET  /health     → health check
 ├── GET  /auth       → Discord OAuth (start linking)
 ├── GET  /callback   → Discord OAuth callback
-├── POST /mcp        → MCP Streamable HTTP (Poke Recipe Server URL)
+├── GET  /.well-known/oauth-* → MCP OAuth discovery metadata
+├── /oauth/*         → MCP OAuth authorize/register/token endpoints
+├── POST /mcp        → MCP Streamable HTTP (OAuth bearer or legacy Poke headers)
 └── discord.js bot   → background gateway connection
 ```
 
@@ -54,8 +57,39 @@ All endpoints on **one port** (default `3000`):
 |----------|---------|
 | `GET /health` | Health check |
 | `GET /auth?poke_user_id=<id>` | Start Discord OAuth linking |
-| `GET /callback` | OAuth redirect target |
-| `POST /mcp` | MCP Streamable HTTP (Poke integration) |
+| `GET /callback` | Discord OAuth redirect target |
+| `GET /.well-known/oauth-authorization-server` | OAuth server metadata for MCP clients |
+| `GET /.well-known/oauth-protected-resource` | Protected resource metadata for `/mcp` |
+| `POST /oauth/register` | Dynamic client registration |
+| `GET /oauth/authorize` | User authorization + Poke ID consent |
+| `POST /oauth/token` | Authorization code + PKCE token exchange |
+| `POST /mcp` | MCP Streamable HTTP endpoint |
+
+## AI Client Integration
+
+Use your public MCP endpoint as the remote MCP server URL:
+
+```
+https://your-app.onrender.com/mcp
+```
+
+The server advertises OAuth metadata so clients that support remote MCP OAuth can connect automatically:
+
+- Authorization server metadata: `/.well-known/oauth-authorization-server`
+- Protected resource metadata: `/.well-known/oauth-protected-resource`
+- Dynamic client registration: `/oauth/register`
+- Authorization endpoint: `/oauth/authorize`
+- Token endpoint: `/oauth/token`
+
+Supported flow:
+
+1. Claude, ChatGPT, Poke, or another MCP client opens `/mcp`.
+2. If no bearer token is present, `/mcp` returns `401` with `WWW-Authenticate` metadata discovery.
+3. The client registers itself, starts authorization-code + PKCE, and redirects the user to `/oauth/authorize`.
+4. The user enters their Poke ID and approves MCP access.
+5. The client exchanges the authorization code at `/oauth/token` and calls `/mcp` with `Authorization: Bearer <token>`.
+
+Legacy Poke integrations can still send `X-Poke-Id` or `X-Poke-User-Id` directly. Tool schemas still do **not** include Poke IDs; identity is injected into request context from OAuth bearer tokens or legacy request headers.
 
 ## Poke Recipe Integration
 
@@ -65,7 +99,7 @@ In the Poke Recipe MCP configuration, set the **Server URL** to your public MCP 
 https://your-app.onrender.com/mcp
 ```
 
-Use your Render service URL (or local `http://localhost:3000/mcp` for dev). This single URL is the Streamable HTTP / SSE transport endpoint — Poke sends MCP JSON-RPC requests here.
+Use your Render service URL (or local `http://localhost:3000/mcp` for dev). This single URL is the Streamable HTTP endpoint — Poke sends MCP JSON-RPC requests here. Prefer OAuth bearer tokens for new integrations; legacy `X-Poke-Id` / `X-Poke-User-Id` headers remain supported.
 
 Also configure in Render / `.env`:
 
@@ -114,11 +148,11 @@ Render injects `PORT` automatically — do not hardcode it.
 1. User visits: `{BASE_URL}/auth?poke_user_id=<poke-user-id>`
 2. Discord OAuth — user selects server and authorizes bot
 3. Callback saves link to Supabase
-4. Poke AI calls MCP tools at `{BASE_URL}/mcp` with that `pokeUserId`
+4. An AI client connects to `{BASE_URL}/mcp` using MCP OAuth, or a legacy Poke integration calls MCP tools with `X-Poke-Id` / `X-Poke-User-Id`
 
 ## MCP Tools
 
-All tools require `pokeUserId`:
+All tools are scoped to the authenticated Poke user from OAuth bearer tokens or legacy headers. `pokeUserId` is **not** part of the tool input schema:
 
 | Tool | Description |
 |------|-------------|

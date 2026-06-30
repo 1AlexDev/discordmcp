@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -7,6 +7,10 @@ import { runWithMcpRequestContext } from "./request-context.js";
 import { registerDiscordTools, TOOL_COUNT } from "./tools/index.js";
 import { interactionStream } from "../discord/automation-engine.js";
 import { getPokeUserIdFromRequest } from "../api/session.js";
+import {
+  getMcpOAuthPokeUserIdFromRequest,
+  protectedResourceMetadataUrl,
+} from "../api/oauth-provider.js";
 
 /** Creates a configured MCP server with all Discord tools registered. */
 export function createMcpServer(): McpServer {
@@ -27,6 +31,35 @@ export function createMcpServer(): McpServer {
  * POST /mcp handles JSON-RPC; used as the Poke Recipe "Server URL" SSE endpoint.
  */
 export function registerMcpHttpRoutes(app: Express): void {
+  const sendMcpAuthChallenge = (req: Request, res: Response) => {
+    res.setHeader(
+      "WWW-Authenticate",
+      `Bearer resource_metadata="${protectedResourceMetadataUrl()}"`,
+    );
+    res.status(401).json({
+      jsonrpc: "2.0",
+      error: {
+        code: -32001,
+        message:
+          "Missing MCP authorization. Start OAuth using the advertised protected-resource metadata, or send X-Poke-Id/X-Poke-User-Id for legacy Poke integrations.",
+      },
+      id: req.body?.id ?? null,
+    });
+  };
+
+  app.get("/mcp", (req, res) => {
+    const pokeUserId =
+      getMcpOAuthPokeUserIdFromRequest(req) ?? getPokeUserIdFromRequest(req);
+    if (!pokeUserId) {
+      sendMcpAuthChallenge(req, res);
+      return;
+    }
+
+    res.status(405).json({
+      error: "Method not allowed. Send MCP JSON-RPC requests with POST /mcp.",
+    });
+  });
+
   app.get("/mcp/events", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -45,17 +78,10 @@ export function registerMcpHttpRoutes(app: Express): void {
   });
 
   app.post("/mcp", async (req, res) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId =
+      getMcpOAuthPokeUserIdFromRequest(req) ?? getPokeUserIdFromRequest(req);
     if (!pokeUserId) {
-      res.status(401).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32001,
-          message:
-            "Missing Poke user identity. Send X-Poke-Id or X-Poke-User-Id, or link via /auth first.",
-        },
-        id: req.body?.id ?? null,
-      });
+      sendMcpAuthChallenge(req, res);
       return;
     }
 

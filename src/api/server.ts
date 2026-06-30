@@ -4,6 +4,7 @@ import { callbackRouter } from "./routes/callback.js";
 import { dashboardRouter, userApiRouter } from "./routes/dashboard.js";
 import { webhookRouter } from "./routes/webhook.js";
 import { studioRouter } from "./routes/studio.js";
+import { oauthRouter } from "./oauth-provider.js";
 import { registerMcpHttpRoutes } from "../mcp/server.js";
 import { env } from "../config/env.js";
 
@@ -16,6 +17,7 @@ export function createApp(): Express {
   const app = express();
 
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -26,6 +28,7 @@ export function createApp(): Express {
     });
   });
 
+  app.use(oauthRouter);
   app.use("/auth", authRouter);
   app.use("/callback", callbackRouter);
   app.use("/dashboard/studio", studioRouter);
@@ -54,7 +57,14 @@ export function startHttpServer(app: Express, port: number): void {
     console.log(
       `[server] OAuth init: ${env.BASE_URL}/auth/init?poke_user_id=<id>`,
     );
-    console.log(`[server] OAuth callback: ${env.BASE_URL}/callback`);
+    console.log(`[server] Discord OAuth callback: ${env.BASE_URL}/callback`);
+    console.log(
+      `[server] MCP OAuth authorize: ${env.BASE_URL}/oauth/authorize`,
+    );
+    console.log(`[server] MCP OAuth token: ${env.BASE_URL}/oauth/token`);
+    console.log(
+      `[server] MCP OAuth registration: ${env.BASE_URL}/oauth/register`,
+    );
     console.log(`[server] Dashboard: ${env.BASE_URL}/dashboard`);
 
     if (env.MCP_TRANSPORT === "sse") {
