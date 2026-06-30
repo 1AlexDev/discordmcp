@@ -17,7 +17,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   /** `sse` mounts /mcp on the unified HTTP server (production). `stdio` is for local Cursor only. */
   MCP_TRANSPORT: z.enum(["stdio", "sse"]).default("sse"),
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
   OAUTH_STATE_SECRET: z.string().min(16).optional(),
 });
 
@@ -50,15 +52,22 @@ export const discordRedirectUri =
 export const mcpServerUrl = new URL("/mcp", env.BASE_URL).href;
 
 /** Discord bot permission bitfield for OAuth bot scope. */
-export const DISCORD_BOT_PERMISSIONS = BigInt(
-  0x10 | // Manage Channels
-    0x10000000 | // Manage Roles
-    0x2 | // Kick Members
-    0x4 | // Ban Members
-    0x800 | // Send Messages
-    0x400 | // View Channels
-    0x10000 // Read Message History
-);
+export const DISCORD_BOT_PERMISSIONS =
+  0x2n | // Kick Members
+  0x4n | // Ban Members
+  0x10n | // Manage Channels
+  0x20n | // Manage Server / AutoMod
+  0x40n | // Add Reactions
+  0x400n | // View Channels
+  0x800n | // Send Messages
+  0x2000n | // Manage Messages
+  0x4000n | // Embed Links
+  0x8000n | // Attach Files
+  0x10000n | // Read Message History
+  0x40000n | // Use External Emojis
+  0x10000000n | // Manage Roles
+  0x20000000n | // Manage Webhooks
+  0x10000000000n; // Moderate Members
 
 /** Resolved listen port — honors Render's dynamic PORT injection. */
 export function getListenPort(): number {

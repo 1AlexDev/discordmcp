@@ -6,11 +6,20 @@ import {
   discordRedirectUri,
 } from "../../config/env.js";
 import { createOAuthState } from "../oauth-state.js";
-import { setPokeUserCookie } from "../session.js";
+import { getPokeUserIdFromRequest, setPokeUserCookie } from "../session.js";
 
-const initQuerySchema = z.object({
-  poke_user_id: z.string().min(1, "poke_user_id query parameter is required"),
-});
+const initQuerySchema = z
+  .object({
+    poke_user_id: z.string().optional(),
+    poke_id: z.string().optional(),
+  })
+  .transform((value) => ({
+    poke_user_id: (value.poke_user_id ?? value.poke_id ?? "").trim(),
+  }))
+  .refine((value) => value.poke_user_id.length > 0, {
+    message: "Poke ID is required",
+    path: ["poke_user_id"],
+  });
 
 const DISCORD_OAUTH_BASE = "https://discord.com/api/oauth2/authorize";
 
@@ -34,7 +43,20 @@ function buildDiscordAuthUrl(pokeUserId: string): string {
 }
 
 /** Returns the auth landing page HTML with Tailwind CSS. */
-function renderAuthPage(): string {
+function renderAuthPage(
+  options: { pokeUserId?: string | null; error?: string } = {},
+): string {
+  const safePokeUserId = options.pokeUserId
+    ? options.pokeUserId
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;")
+    : "";
+  const errorHtml = options.error
+    ? `<div class="mb-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-200">${options.error}</div>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -132,6 +154,7 @@ function renderAuthPage(): string {
         </p>
       </div>
 
+      ${errorHtml}
       <form action="/auth/init" method="GET" class="space-y-5" id="auth-form">
         <div class="space-y-2">
           <label for="poke_user_id" class="block text-sm font-medium text-neutral-300">
@@ -144,7 +167,8 @@ function renderAuthPage(): string {
             required
             autocomplete="off"
             spellcheck="false"
-            placeholder="usr_a1b2c3d4"
+            placeholder="Your Poke user ID"
+            value="${safePokeUserId}"
             class="field-focus w-full rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-3 text-[15px] text-white outline-none placeholder:text-neutral-600 hover:border-neutral-700 focus:border-white focus:bg-neutral-900"
           >
         </div>
@@ -163,9 +187,10 @@ function renderAuthPage(): string {
         </button>
       </form>
 
-      <p class="mt-8 text-center text-xs leading-5 text-neutral-500">
-        You will be redirected to Discord to authorize the bot and choose a server.
-      </p>
+      <div class="mt-8 space-y-3 text-center text-xs leading-5 text-neutral-500">
+        <p>You will be redirected to Discord to authorize the bot and choose a server.</p>
+        ${safePokeUserId ? `<a href="/dashboard" class="font-medium text-neutral-300 transition-colors hover:text-white">Open dashboard instead</a>` : ""}
+      </div>
     </section>
   </main>
 
@@ -187,8 +212,10 @@ export const authRouter = Router();
  * GET /auth
  * Serves a clean HTML page where users enter their Poke ID to start OAuth linking.
  */
-authRouter.get("/", (_req: Request, res: Response) => {
-  res.type("html").send(renderAuthPage());
+authRouter.get("/", (req: Request, res: Response) => {
+  res
+    .type("html")
+    .send(renderAuthPage({ pokeUserId: getPokeUserIdFromRequest(req) }));
 });
 
 /**
@@ -197,16 +224,25 @@ authRouter.get("/", (_req: Request, res: Response) => {
  */
 authRouter.get("/init", (req: Request, res: Response) => {
   const parsed = initQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request",
-      details: parsed.error.flatten().fieldErrors,
-    });
+  const pokeUserId = parsed.success
+    ? parsed.data.poke_user_id
+    : getPokeUserIdFromRequest(req);
+
+  if (!pokeUserId) {
+    res
+      .status(400)
+      .type("html")
+      .send(
+        renderAuthPage({
+          pokeUserId: getPokeUserIdFromRequest(req),
+          error: "Enter your Poke ID to continue with Discord.",
+        }),
+      );
     return;
   }
 
-  setPokeUserCookie(res, parsed.data.poke_user_id);
-  const authUrl = buildDiscordAuthUrl(parsed.data.poke_user_id);
+  setPokeUserCookie(res, pokeUserId);
+  const authUrl = buildDiscordAuthUrl(pokeUserId);
   res.redirect(authUrl);
 });
 

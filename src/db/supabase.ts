@@ -123,11 +123,37 @@ export async function upsertAccountLink(
     .select()
     .single();
 
-  if (error) {
+  if (!error) {
+    return rowToAccountLink(data as AccountLinkRow);
+  }
+
+  const shouldTryLegacyUpsert =
+    error.code === "42P10" ||
+    error.code === "23505" ||
+    error.message.toLowerCase().includes("unique") ||
+    error.message.toLowerCase().includes("constraint");
+
+  if (!shouldTryLegacyUpsert) {
     throw new Error(`Failed to upsert account link: ${error.message}`);
   }
 
-  return rowToAccountLink(data as AccountLinkRow);
+  console.warn(
+    "[supabase] Composite account-link upsert failed; falling back to legacy poke_user_id upsert. Apply migration 002_multi_server_account_links.sql to enable multi-server links.",
+  );
+
+  const { data: legacyData, error: legacyError } = await supabase
+    .from(ACCOUNT_LINKS_TABLE)
+    .upsert(row, { onConflict: "poke_user_id" })
+    .select()
+    .single();
+
+  if (legacyError) {
+    throw new Error(
+      `Failed to upsert account link: ${error.message}; legacy fallback failed: ${legacyError.message}`,
+    );
+  }
+
+  return rowToAccountLink(legacyData as AccountLinkRow);
 }
 
 /** Fetches an account link by Poke user ID. Returns null if not linked. */

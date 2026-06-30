@@ -4,6 +4,13 @@ import { env } from "../config/env.js";
 const POKE_USER_COOKIE = "poke_user_id";
 const THIRTY_DAYS_SECONDS = 60 * 60 * 24 * 30;
 
+const POKE_USER_HEADER_NAMES = [
+  "x-poke-id",
+  "x-poke-user-id",
+  "x-poke-user",
+  "x-user-id",
+];
+
 function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
 
@@ -11,20 +18,26 @@ function parseCookies(header: string | undefined): Record<string, string> {
     const [rawName, ...rawValue] = pair.trim().split("=");
     if (!rawName) return cookies;
 
-    cookies[rawName] = decodeURIComponent(rawValue.join("="));
+    try {
+      cookies[rawName] = decodeURIComponent(rawValue.join("="));
+    } catch {
+      cookies[rawName] = rawValue.join("=");
+    }
     return cookies;
   }, {});
 }
 
 /** Reads the current Poke user from query params, headers, or secure cookie. */
 export function getPokeUserIdFromRequest(req: Request): string | null {
-  const queryValue = req.query.poke_user_id;
+  const queryValue = req.query.poke_user_id ?? req.query.poke_id;
   const queryPokeUserId =
     typeof queryValue === "string" ? queryValue.trim() : undefined;
   if (queryPokeUserId) return queryPokeUserId;
 
-  const headerPokeUserId = req.get("x-poke-user-id")?.trim();
-  if (headerPokeUserId) return headerPokeUserId;
+  for (const headerName of POKE_USER_HEADER_NAMES) {
+    const headerPokeUserId = req.get(headerName)?.trim();
+    if (headerPokeUserId) return headerPokeUserId;
+  }
 
   const cookies = parseCookies(req.get("cookie"));
   const cookiePokeUserId = cookies[POKE_USER_COOKIE]?.trim();

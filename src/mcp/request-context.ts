@@ -8,7 +8,7 @@ const requestContext = new AsyncLocalStorage<McpRequestContext>();
 
 export function runWithMcpRequestContext<T>(
   context: McpRequestContext,
-  callback: () => T
+  callback: () => T,
 ): T {
   return requestContext.run(context, callback);
 }
@@ -16,7 +16,7 @@ export function runWithMcpRequestContext<T>(
 export function getCurrentPokeUserId(): string {
   const context = requestContext.getStore();
   if (!context?.pokeUserId) {
-    throw new Error("Missing X-Poke-User-Id request context");
+    throw new Error("Missing Poke user request context");
   }
 
   return context.pokeUserId;

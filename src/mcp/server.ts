@@ -1,4 +1,4 @@
-import type { Express, Request } from "express";
+import type { Express } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -6,6 +6,7 @@ import { env } from "../config/env.js";
 import { runWithMcpRequestContext } from "./request-context.js";
 import { registerDiscordTools, TOOL_COUNT } from "./tools/index.js";
 import { interactionStream } from "../discord/automation-engine.js";
+import { getPokeUserIdFromRequest } from "../api/session.js";
 
 /** Creates a configured MCP server with all Discord tools registered. */
 export function createMcpServer(): McpServer {
@@ -14,17 +15,11 @@ export function createMcpServer(): McpServer {
       name: "poke-discord-mcp",
       version: "1.0.0",
     },
-    { capabilities: { logging: {} } }
+    { capabilities: { logging: {} } },
   );
 
   registerDiscordTools(server);
   return server;
-}
-
-function getPokeUserId(req: Request): string | null {
-  const header = req.get("x-poke-user-id");
-  const pokeUserId = header?.trim();
-  return pokeUserId ? pokeUserId : null;
 }
 
 /**
@@ -50,9 +45,17 @@ export function registerMcpHttpRoutes(app: Express): void {
   });
 
   app.post("/mcp", async (req, res) => {
-    const pokeUserId = getPokeUserId(req);
+    const pokeUserId = getPokeUserIdFromRequest(req);
     if (!pokeUserId) {
-      res.status(400).json({ error: "Missing X-Poke-Id header" });
+      res.status(401).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32001,
+          message:
+            "Missing Poke user identity. Send X-Poke-Id or X-Poke-User-Id, or link via /auth first.",
+        },
+        id: req.body?.id ?? null,
+      });
       return;
     }
 
@@ -63,7 +66,7 @@ export function registerMcpHttpRoutes(app: Express): void {
       });
       await server.connect(transport);
       await runWithMcpRequestContext({ pokeUserId }, () =>
-        transport.handleRequest(req, res, req.body)
+        transport.handleRequest(req, res, req.body),
       );
 
       res.on("close", () => {
@@ -82,7 +85,9 @@ export function registerMcpHttpRoutes(app: Express): void {
     }
   });
 
-  console.log(`[mcp] Streamable HTTP routes mounted at POST /mcp (${TOOL_COUNT} tools)`);
+  console.log(
+    `[mcp] Streamable HTTP routes mounted at POST /mcp (${TOOL_COUNT} tools)`,
+  );
 }
 
 /** Starts MCP over stdio (local Cursor integration — runs alongside the HTTP server). */

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { env, discordRedirectUri } from "../../config/env.js";
 import { upsertAccountLink } from "../../db/supabase.js";
+import { getDiscordClient, waitForDiscordReady } from "../../discord/client.js";
 import { verifyOAuthState } from "../oauth-state.js";
 import { setPokeUserCookie } from "../session.js";
 
@@ -183,7 +184,28 @@ callbackRouter.get("/", async (req: Request, res: Response) => {
       botPermissions,
     });
 
+    await waitForDiscordReady();
+    const client = getDiscordClient();
+    const guild =
+      client.guilds.cache.get(guild_id) ??
+      (await client.guilds.fetch(guild_id).catch(() => null));
+
     setPokeUserCookie(res, pokeUserId);
+
+    if (!guild) {
+      res
+        .status(202)
+        .type("html")
+        .send(
+          renderStatusPage(
+            "Linked, Still Syncing",
+            "Your account link was saved, but the bot is not visible in the selected server yet. Confirm the bot was invited successfully, then retry from the dashboard.",
+            false,
+            { href: "/dashboard", label: "Open dashboard" },
+          ),
+        );
+      return;
+    }
     res
       .status(200)
       .type("html")
