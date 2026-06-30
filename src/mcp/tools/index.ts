@@ -44,6 +44,56 @@ async function withGuild<T>(
 /** Registers all Discord MCP tools on the given server instance. */
 export function registerDiscordTools(server: McpServer): void {
   server.registerTool(
+    "run_batch",
+    {
+      description:
+        "Executes multiple Discord MCP tools in a single request. Results are aggregated into a JSON array.",
+      inputSchema: {
+        actions: z
+          .array(
+            z.object({
+              toolName: z
+                .string()
+                .describe("The name of the tool to execute (e.g., 'send_message')"),
+              arguments: z.record(z.any()).describe("The arguments for the tool"),
+            }),
+          )
+          .max(10)
+          .describe("List of up to 10 tool actions to perform"),
+      },
+    },
+    async ({ actions }) => {
+      const results = [];
+
+      for (const action of actions) {
+        try {
+          const result = await server.callTool(action.toolName, action.arguments);
+          results.push({
+            toolName: action.toolName,
+            status: "success",
+            result,
+          });
+        } catch (err) {
+          results.push({
+            toolName: action.toolName,
+            status: "error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
     "list_channels",
     {
       description:
@@ -807,4 +857,4 @@ export function registerDiscordTools(server: McpServer): void {
 }
 
 /** Tool count for startup logging. */
-export const TOOL_COUNT = 32;
+export const TOOL_COUNT = 33;
