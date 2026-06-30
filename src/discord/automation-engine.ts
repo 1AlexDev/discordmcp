@@ -311,7 +311,7 @@ async function executeAction(
     case "DELETE_CHANNEL": {
       const channelId =
         typeof action.channel_id === "string"
-          ? replaceVars(channelId)
+          ? replaceVars(action.channel_id)
           : context.interaction?.channelId;
       if (!channelId) return variables;
 

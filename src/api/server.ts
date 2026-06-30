@@ -3,6 +3,7 @@ import { authRouter } from "./routes/auth.js";
 import { callbackRouter } from "./routes/callback.js";
 import { dashboardRouter, userApiRouter } from "./routes/dashboard.js";
 import { webhookRouter } from "./routes/webhook.js";
+import { studioRouter } from "./routes/studio.js";
 import { registerMcpHttpRoutes } from "../mcp/server.js";
 import { env } from "../config/env.js";
 
@@ -27,6 +28,7 @@ export function createApp(): Express {
 
   app.use("/auth", authRouter);
   app.use("/callback", callbackRouter);
+  app.use("/dashboard/studio", studioRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/api", userApiRouter);
   app.use("/webhook", webhookRouter);

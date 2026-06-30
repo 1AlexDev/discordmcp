@@ -215,6 +215,42 @@ export interface CreateAutomationScriptInput {
   actions: unknown[];
 }
 
+export type UpdateAutomationScriptInput = {
+  pokeUserId: string;
+  discordGuildId: string;
+  eventType: string;
+  triggerId?: string | null;
+  actions: Record<string, unknown>[];
+  active?: boolean;
+};
+
+export async function updateAutomationScript(
+  scriptId: string,
+  input: UpdateAutomationScriptInput,
+): Promise<AutomationScript> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from(AUTOMATION_SCRIPTS_TABLE)
+    .update({
+      event_type: input.eventType,
+      trigger_id: input.triggerId ?? null,
+      actions: input.actions,
+      active: input.active ?? true,
+    })
+    .eq("id", scriptId)
+    .eq("poke_user_id", input.pokeUserId)
+    .eq("discord_guild_id", input.discordGuildId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update automation script: ${error.message}`);
+  }
+
+  return rowToAutomationScript(data as AutomationScriptRow);
+}
+
 export async function createAutomationScript(
   input: CreateAutomationScriptInput,
 ): Promise<AutomationScript> {

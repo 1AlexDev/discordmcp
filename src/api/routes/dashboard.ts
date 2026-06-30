@@ -1,10 +1,13 @@
 import { Router, type Request, type Response } from "express";
+import { z } from "zod";
 import {
+  createAutomationScript,
   deleteAutomationScript,
   getAccountLinksByPokeUserId,
   getAutomationScriptById,
   getAutomationScriptsByGuild,
   isGuildLinkedToPokeUser,
+  updateAutomationScript,
 } from "../../db/supabase.js";
 import { getDiscordClient, waitForDiscordReady } from "../../discord/client.js";
 import { invalidateAutomationCache } from "../../discord/automation-engine.js";
@@ -13,6 +16,13 @@ import {
   getPokeUserIdFromRequest,
   setPokeUserCookie,
 } from "../session.js";
+
+const automationScriptPayloadSchema = z.object({
+  event_type: z.string().min(1).max(100),
+  trigger_id: z.string().max(200).nullable().optional(),
+  actions: z.array(z.record(z.string(), z.unknown())).default([]),
+  active: z.boolean().optional(),
+});
 
 interface DashboardServerSummary {
   id: string;
@@ -154,7 +164,10 @@ function renderDashboardPage(pokeUserId: string): string {
           <h2 id="scripts-title" class="mt-2 text-xl font-semibold tracking-[-0.03em]">Select a server</h2>
           <p class="mt-2 text-sm text-neutral-600">Review active triggers and remove automation scripts instantly.</p>
         </div>
-        <button id="close-scripts" class="text-sm font-medium text-neutral-500 transition-colors hover:text-neutral-950" type="button">Close</button>
+        <div class="flex items-center gap-3">
+          <a id="open-studio" href="#" class="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white transition-transform hover:-translate-y-0.5">Open Studio</a>
+          <button id="close-scripts" class="text-sm font-medium text-neutral-500 transition-colors hover:text-neutral-950" type="button">Close</button>
+        </div>
       </div>
       <div id="scripts-list" class="mt-6 space-y-3"></div>
     </section>
@@ -168,6 +181,7 @@ function renderDashboardPage(pokeUserId: string): string {
     const scriptsTitle = document.getElementById('scripts-title');
     const scriptsList = document.getElementById('scripts-list');
     const closeScripts = document.getElementById('close-scripts');
+    const openStudio = document.getElementById('open-studio');
     const toast = document.getElementById('toast');
     let selectedGuildId = null;
 
@@ -216,7 +230,10 @@ function renderDashboardPage(pokeUserId: string): string {
         + '<p class="mt-1 truncate text-sm text-neutral-600">' + escapeHtml(summarizeActions(script.actions)) + '</p>'
         + '<p class="mt-2 text-xs text-neutral-400">Script ID ' + escapeHtml(script.id) + '</p>'
         + '</div>'
+        + '<div class="flex shrink-0 items-center gap-2">'
+        + '<a href="/dashboard/studio/' + encodeURIComponent(selectedGuildId || script.discord_guild_id || '') + '/' + encodeURIComponent(script.id) + '" class="rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-neutral-800">Edit</a>'
         + '<button type="button" data-script-id="' + escapeHtml(script.id) + '" class="delete-script rounded-xl border border-neutral-200 px-3 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:border-red-300 hover:text-red-700">Delete</button>'
+        + '</div>'
         + '</div>'
         + '</article>';
     }
@@ -225,6 +242,7 @@ function renderDashboardPage(pokeUserId: string): string {
       selectedGuildId = guildId;
       scriptsSection.classList.remove('hidden');
       scriptsTitle.textContent = 'Scripts for ' + guildName;
+      openStudio.href = '/dashboard/studio/' + encodeURIComponent(guildId);
       scriptsList.innerHTML = '<div class="rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-500">Loading scripts…</div>';
       scriptsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -236,7 +254,8 @@ function renderDashboardPage(pokeUserId: string): string {
         if (!payload.scripts.length) {
           scriptsList.innerHTML = '<div class="rounded-2xl border border-neutral-200 bg-white p-8 text-center">'
             + '<h3 class="text-base font-semibold text-neutral-950">No scripts yet</h3>'
-            + '<p class="mx-auto mt-2 max-w-md text-sm leading-6 text-neutral-600">Use Poke to create automation scripts for buttons, messages, and member joins.</p>'
+            + '<p class="mx-auto mt-2 max-w-md text-sm leading-6 text-neutral-600">Create one in the visual studio or use Poke to generate it for you.</p>'
+            + '<a href="/dashboard/studio/' + encodeURIComponent(guildId) + '" class="mt-5 inline-flex items-center justify-center rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Studio</a>'
             + '</div>';
           return;
         }
@@ -412,6 +431,87 @@ userApiRouter.get(
       console.error("[dashboard] Failed to fetch scripts:", err);
       res.status(500).json({
         error: "Failed to load scripts",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+);
+
+userApiRouter.post(
+  "/servers/:guild_id/scripts",
+  async (req: Request, res: Response) => {
+    const pokeUserId = getPokeUserIdFromRequest(req);
+    if (!pokeUserId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const guildId = String(req.params.guild_id);
+
+    try {
+      const linked = await isGuildLinkedToPokeUser(pokeUserId, guildId);
+      if (!linked) {
+        res
+          .status(403)
+          .json({ error: "Server is not linked to this Poke user" });
+        return;
+      }
+
+      const body = automationScriptPayloadSchema.parse(req.body);
+      const script = await createAutomationScript({
+        pokeUserId,
+        discordGuildId: guildId,
+        eventType: body.event_type,
+        triggerId: body.trigger_id ?? null,
+        actions: body.actions,
+      });
+
+      invalidateAutomationCache();
+      res.status(201).json({ script });
+    } catch (err) {
+      console.error("[dashboard] Failed to create script:", err);
+      res.status(400).json({
+        error: "Failed to create script",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+);
+
+userApiRouter.put(
+  "/scripts/:script_id",
+  async (req: Request, res: Response) => {
+    const pokeUserId = getPokeUserIdFromRequest(req);
+    if (!pokeUserId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const scriptId = String(req.params.script_id);
+
+    try {
+      const existing = await getAutomationScriptById(scriptId);
+      if (!existing || existing.poke_user_id !== pokeUserId) {
+        res.status(404).json({ error: "Script not found" });
+        return;
+      }
+
+      const body = automationScriptPayloadSchema.parse(req.body);
+      const script = await updateAutomationScript(scriptId, {
+        pokeUserId,
+        discordGuildId: existing.discord_guild_id,
+        eventType: body.event_type,
+        triggerId: body.trigger_id ?? null,
+        actions: body.actions,
+        active: body.active,
+      });
+
+      invalidateAutomationCache();
+      res.json({ script });
+    } catch (err) {
+      console.error("[dashboard] Failed to update script:", err);
+      res.status(400).json({
+        error: "Failed to update script",
         message: err instanceof Error ? err.message : String(err),
       });
     }
