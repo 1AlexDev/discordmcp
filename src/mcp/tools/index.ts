@@ -55,7 +55,7 @@ export function registerDiscordTools(server: McpServer): void {
               toolName: z
                 .string()
                 .describe("The name of the tool to execute (e.g., 'send_message')"),
-              arguments: z.record(z.any()).describe("The arguments for the tool"),
+              arguments: z.record(z.string(), z.any()).describe("The arguments for the tool"),
             }),
           )
           .max(10)
