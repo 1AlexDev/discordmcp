@@ -67,6 +67,7 @@ export function registerDiscordTools(server: McpServer): void {
 
       for (const action of actions) {
         try {
+          // @ts-expect-error - callTool is the internal way to invoke registered tools
           const result = await server.callTool(action.toolName, action.arguments);
           results.push({
             toolName: action.toolName,
