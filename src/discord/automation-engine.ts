@@ -147,11 +147,17 @@ async function executeAction(
       if (!channelId || (!content && !components)) return variables;
 
       if (ephemeral && context.interaction?.isRepliable()) {
-        await (context.interaction as any).reply({
+        const replyPayload = {
           content,
           components: components as any,
           ephemeral: true,
-        });
+        };
+
+        if (context.interaction.deferred || context.interaction.replied) {
+          await (context.interaction as any).followUp(replyPayload);
+        } else {
+          await (context.interaction as any).reply(replyPayload);
+        }
       } else {
         const channel = await context.client.channels
           .fetch(channelId)
@@ -305,7 +311,7 @@ async function executeAction(
     case "DELETE_CHANNEL": {
       const channelId =
         typeof action.channel_id === "string"
-          ? replaceVars(action.channel_id)
+          ? replaceVars(channelId)
           : context.interaction?.channelId;
       if (!channelId) return variables;
 
@@ -389,6 +395,7 @@ export function registerAutomationListeners(client: Client): void {
         );
 
         if (!hasModal && !interaction.deferred && !interaction.replied) {
+          // Defer update to satisfy the 3s window if we're not showing a modal
           await interaction.deferUpdate().catch(() => undefined);
         }
 
