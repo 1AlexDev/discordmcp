@@ -12,9 +12,8 @@ import {
 import { getDiscordClient, waitForDiscordReady } from "../../discord/client.js";
 import { invalidateAutomationCache } from "../../discord/automation-engine.js";
 import {
-  clearPokeUserCookie,
-  getPokeUserIdFromRequest,
-  setPokeUserCookie,
+  clearUserSession,
+  resolvePokeUserId,
 } from "../session.js";
 
 const automationScriptPayloadSchema = z.object({
@@ -82,7 +81,7 @@ async function fetchLinkedServers(
 
 function renderDashboardPage(pokeUserId: string): string {
   const safePokeUserId = escapeHtml(pokeUserId);
-  const oauthUrl = `/auth/init?poke_user_id=${encodeURIComponent(pokeUserId)}`;
+  const oauthUrl = `/auth/link`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -320,7 +319,7 @@ function renderDashboardPage(pokeUserId: string): string {
       try {
         const response = await fetch('/api/user/servers', { credentials: 'same-origin' });
         if (response.status === 401) {
-          window.location.href = '/auth';
+          window.location.href = '/auth/login';
           return;
         }
         if (!response.ok) throw new Error('Failed to load servers');
@@ -370,24 +369,23 @@ function renderDashboardPage(pokeUserId: string): string {
 export const dashboardRouter = Router();
 export const userApiRouter = Router();
 
-dashboardRouter.get("/", (req: Request, res: Response) => {
-  const pokeUserId = getPokeUserIdFromRequest(req);
+dashboardRouter.get("/", async (req: Request, res: Response) => {
+  const pokeUserId = await resolvePokeUserId(req);
   if (!pokeUserId) {
-    res.redirect("/auth");
+    res.redirect("/auth/login");
     return;
   }
 
-  setPokeUserCookie(res, pokeUserId);
   res.type("html").send(renderDashboardPage(pokeUserId));
 });
 
-dashboardRouter.post("/logout", (_req: Request, res: Response) => {
-  clearPokeUserCookie(res);
-  res.redirect("/auth");
+dashboardRouter.post("/logout", async (req: Request, res: Response) => {
+  await clearUserSession(req, res);
+  res.redirect("/auth/login");
 });
 
 userApiRouter.get("/user/servers", async (req: Request, res: Response) => {
-  const pokeUserId = getPokeUserIdFromRequest(req);
+  const pokeUserId = await resolvePokeUserId(req);
   if (!pokeUserId) {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -408,7 +406,7 @@ userApiRouter.get("/user/servers", async (req: Request, res: Response) => {
 userApiRouter.get(
   "/servers/:guild_id/scripts",
   async (req: Request, res: Response) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolvePokeUserId(req);
     if (!pokeUserId) {
       res.status(401).json({ error: "Not authenticated" });
       return;
@@ -440,7 +438,7 @@ userApiRouter.get(
 userApiRouter.post(
   "/servers/:guild_id/scripts",
   async (req: Request, res: Response) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolvePokeUserId(req);
     if (!pokeUserId) {
       res.status(401).json({ error: "Not authenticated" });
       return;
@@ -481,7 +479,7 @@ userApiRouter.post(
 userApiRouter.put(
   "/scripts/:script_id",
   async (req: Request, res: Response) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolvePokeUserId(req);
     if (!pokeUserId) {
       res.status(401).json({ error: "Not authenticated" });
       return;
@@ -521,7 +519,7 @@ userApiRouter.put(
 userApiRouter.delete(
   "/scripts/:script_id",
   async (req: Request, res: Response) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolvePokeUserId(req);
     if (!pokeUserId) {
       res.status(401).json({ error: "Not authenticated" });
       return;

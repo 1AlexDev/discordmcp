@@ -6,11 +6,18 @@ import { env } from "../config/env.js";
 import { runWithMcpRequestContext } from "./request-context.js";
 import { registerDiscordTools, TOOL_COUNT } from "./tools/index.js";
 import { interactionStream } from "../discord/automation-engine.js";
-import { getPokeUserIdFromRequest } from "../api/session.js";
+import { resolvePokeUserId } from "../api/session.js";
 import {
   getMcpOAuthPokeUserIdFromRequest,
   protectedResourceMetadataUrl,
 } from "../api/oauth-provider.js";
+
+async function resolveMcpPokeUserId(req: Request): Promise<string | null> {
+  return (
+    (await getMcpOAuthPokeUserIdFromRequest(req)) ??
+    (await resolvePokeUserId(req))
+  );
+}
 
 /** Creates a configured MCP server with all Discord tools registered. */
 export function createMcpServer(): McpServer {
@@ -47,9 +54,8 @@ export function registerMcpHttpRoutes(app: Express): void {
     });
   };
 
-  app.get("/mcp", (req, res) => {
-    const pokeUserId =
-      getMcpOAuthPokeUserIdFromRequest(req) ?? getPokeUserIdFromRequest(req);
+  app.get("/mcp", async (req, res) => {
+    const pokeUserId = await resolveMcpPokeUserId(req);
     if (!pokeUserId) {
       sendMcpAuthChallenge(req, res);
       return;
@@ -78,8 +84,7 @@ export function registerMcpHttpRoutes(app: Express): void {
   });
 
   app.post("/mcp", async (req, res) => {
-    const pokeUserId =
-      getMcpOAuthPokeUserIdFromRequest(req) ?? getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolveMcpPokeUserId(req);
     if (!pokeUserId) {
       sendMcpAuthChallenge(req, res);
       return;

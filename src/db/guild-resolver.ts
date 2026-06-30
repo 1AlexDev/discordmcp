@@ -26,7 +26,7 @@ export async function resolveGuildForPokeUser(
     throw new GuildResolverError(
       "NOT_LINKED",
       `No Discord server is linked for Poke user "${pokeUserId}". ` +
-        "The user must complete OAuth linking via /auth first.",
+        "The user must log in via /auth/login and link a Discord server via /auth/link first.",
     );
   }
 

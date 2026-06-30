@@ -1,26 +1,35 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { env } from "../config/env.js";
 
-const STATE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const STATE_TTL_MS = 30 * 60 * 1000;
+
+export type OAuthFlow =
+  | { type: "login"; returnTo?: string }
+  | { type: "link_guild"; userId: string; returnTo?: string };
 
 function getStateSecret(): string {
   return env.OAUTH_STATE_SECRET ?? "dev-insecure-state-secret-change-me";
 }
 
-/** Encodes pokeUserId + timestamp + HMAC into a URL-safe state token. */
-export function createOAuthState(pokeUserId: string): string {
-  const timestamp = Date.now();
-  const payload = JSON.stringify({ pokeUserId, timestamp });
-  const signature = createHmac("sha256", getStateSecret())
-    .update(payload)
-    .digest("hex");
+function signPayload(payload: string): string {
+  return createHmac("sha256", getStateSecret()).update(payload).digest("hex");
+}
+
+/** Encodes an OAuth flow + timestamp + HMAC into a URL-safe state token. */
+export function createOAuthState(flow: OAuthFlow): string {
+  const envelope = {
+    flow,
+    timestamp: Date.now(),
+  };
+  const payload = JSON.stringify(envelope);
+  const signature = signPayload(payload);
   return Buffer.from(JSON.stringify({ payload, signature })).toString(
     "base64url",
   );
 }
 
-/** Validates and decodes an OAuth state token. Returns pokeUserId or throws. */
-export function verifyOAuthState(state: string): string {
+/** Validates and decodes an OAuth state token. */
+export function verifyOAuthState(state: string): OAuthFlow {
   let decoded: string;
   try {
     decoded = Buffer.from(state, "base64url").toString("utf8");
@@ -28,72 +37,107 @@ export function verifyOAuthState(state: string): string {
     throw new Error("Invalid OAuth state encoding");
   }
 
-  let pokeUserId: string;
-  let timestamp: number;
-  let signature: string;
-  let payload: string;
-
   try {
     const parsed = JSON.parse(decoded) as {
       payload?: unknown;
       signature?: unknown;
     };
+
     if (
       typeof parsed.payload !== "string" ||
       typeof parsed.signature !== "string"
     ) {
-      throw new Error("Invalid OAuth state payload");
+      throw new Error("Invalid OAuth state envelope");
     }
 
-    const payloadData = JSON.parse(parsed.payload) as {
-      pokeUserId?: unknown;
+    const expected = signPayload(parsed.payload);
+    const sigBuf = Buffer.from(parsed.signature, "hex");
+    const expBuf = Buffer.from(expected, "hex");
+    if (
+      sigBuf.length !== expBuf.length ||
+      !timingSafeEqual(sigBuf, expBuf)
+    ) {
+      throw new Error("Invalid OAuth state signature");
+    }
+
+    const envelope = JSON.parse(parsed.payload) as {
+      flow?: OAuthFlow;
       timestamp?: unknown;
     };
-    if (typeof payloadData.pokeUserId !== "string") {
-      throw new Error("Invalid OAuth state user");
+
+    const timestamp = Number(envelope.timestamp);
+    const age = Date.now() - timestamp;
+    if (Number.isNaN(age) || age > STATE_TTL_MS) {
+      throw new Error("OAuth state expired");
     }
 
-    pokeUserId = payloadData.pokeUserId;
-    timestamp = Number(payloadData.timestamp);
-    signature = parsed.signature;
-    payload = parsed.payload;
+    if (!envelope.flow?.type) {
+      throw new Error("Invalid OAuth state flow");
+    }
+
+    return envelope.flow;
+  } catch (err) {
+    try {
+      const legacyUserId = verifyLegacyOAuthState(state);
+      return { type: "link_guild", userId: legacyUserId };
+    } catch {
+      throw err instanceof Error ? err : new Error("Invalid OAuth state");
+    }
+  }
+}
+
+function verifyLegacyOAuthState(state: string): string {
+  let decoded: string;
+  try {
+    decoded = Buffer.from(state, "base64url").toString("utf8");
   } catch {
-    // Backward compatibility for older links generated as pokeUserId:timestamp:signature.
-    const parts = decoded.split(":");
-    if (parts.length !== 3) {
-      throw new Error("Invalid OAuth state format");
-    }
-
-    const [legacyPokeUserId, legacyTimestamp, legacySignature] = parts;
-    pokeUserId = legacyPokeUserId;
-    timestamp = Number(legacyTimestamp);
-    signature = legacySignature;
-    payload = `${legacyPokeUserId}:${legacyTimestamp}`;
+    throw new Error("Invalid legacy OAuth state");
   }
 
-  const expected = createHmac("sha256", getStateSecret())
-    .update(payload)
-    .digest("hex");
+  const parsed = JSON.parse(decoded) as {
+    payload?: string;
+    signature?: string;
+  };
 
-  const sigBuf = Buffer.from(signature, "hex");
+  if (typeof parsed.payload !== "string" || typeof parsed.signature !== "string") {
+    throw new Error("Invalid legacy OAuth state");
+  }
+
+  const payloadData = JSON.parse(parsed.payload) as {
+    pokeUserId?: string;
+    timestamp?: number;
+  };
+
+  if (!payloadData.pokeUserId) {
+    throw new Error("Missing pokeUserId in legacy state");
+  }
+
+  const expected = signPayload(parsed.payload);
+  const sigBuf = Buffer.from(parsed.signature, "hex");
   const expBuf = Buffer.from(expected, "hex");
   if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
-    throw new Error("Invalid OAuth state signature");
+    throw new Error("Invalid legacy OAuth state signature");
   }
 
-  const age = Date.now() - timestamp;
+  const age = Date.now() - Number(payloadData.timestamp);
   if (Number.isNaN(age) || age > STATE_TTL_MS) {
     throw new Error("OAuth state expired");
   }
 
-  if (!pokeUserId) {
-    throw new Error("Missing pokeUserId in OAuth state");
-  }
-
-  return pokeUserId;
+  return payloadData.pokeUserId;
 }
 
-/** Generates a random nonce for additional CSRF protection if needed. */
 export function generateNonce(): string {
   return randomBytes(16).toString("hex");
+}
+
+/** Validates a same-origin return path to prevent open redirects. */
+export function sanitizeReturnTo(returnTo?: string): string {
+  if (!returnTo) return "/dashboard";
+
+  if (!returnTo.startsWith("/") || returnTo.startsWith("//")) {
+    return "/dashboard";
+  }
+
+  return returnTo;
 }

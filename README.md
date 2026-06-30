@@ -5,8 +5,9 @@ Custom [Model Context Protocol](https://modelcontextprotocol.io/) server that le
 ## Features
 
 - **Unified HTTP server** — OAuth, health, and MCP on a **single port** (Render-compatible)
-- **OAuth account linking** — Connect a Poke user to a Discord guild via `/auth`
-- **MCP OAuth 2.1** — AI clients can connect to `/mcp` with authorization-code + PKCE, dynamic client registration, and bearer tokens
+- **Discord OAuth login** — Users sign in with Discord (no manual Poke ID entry)
+- **OAuth account linking** — Connect Discord servers via `/auth/link` after login
+- **MCP OAuth 2.1** — AI clients authenticate via `/oauth/*` with PKCE; tokens stored in Supabase
 - **Discord bot** — Executes all actions through `discord.js` in the same process
 - **7 MCP tools** — Channels, messages, roles, kicks, bans (all scoped by `pokeUserId`)
 - **Supabase storage** — Persists `poke_user_id` ↔ `discord_guild_id` mappings
@@ -16,8 +17,9 @@ Custom [Model Context Protocol](https://modelcontextprotocol.io/) server that le
 ```
 Single process on PORT (Render-injected or 3000 locally)
 ├── GET  /health     → health check
-├── GET  /auth       → Discord OAuth (start linking)
-├── GET  /callback   → Discord OAuth callback
+├── GET  /auth/login → Discord OAuth login (creates session)
+├── GET  /auth/link  → Discord bot install + guild link (requires login)
+├── GET  /callback   → Unified Discord OAuth callback
 ├── GET  /.well-known/oauth-* → MCP OAuth discovery metadata
 ├── /oauth/*         → MCP OAuth authorize/register/token endpoints
 ├── POST /mcp        → MCP Streamable HTTP (OAuth bearer or legacy Poke headers)
@@ -35,7 +37,12 @@ Single process on PORT (Render-injected or 3000 locally)
 
 ### 2. Supabase
 
-Run [supabase/migrations/001_discord_account_links.sql](supabase/migrations/001_discord_account_links.sql) in your project.
+Run all migrations in order:
+
+1. [001_discord_account_links.sql](supabase/migrations/001_discord_account_links.sql)
+2. [002_multi_server_account_links.sql](supabase/migrations/002_multi_server_account_links.sql)
+3. [003_automation_scripts.sql](supabase/migrations/003_automation_scripts.sql) *(if using automations)*
+4. [004_oauth_login.sql](supabase/migrations/004_oauth_login.sql) — **required** for OAuth login + MCP tokens
 
 ### 3. Environment
 
@@ -56,12 +63,15 @@ All endpoints on **one port** (default `3000`):
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /health` | Health check |
-| `GET /auth?poke_user_id=<id>` | Start Discord OAuth linking |
-| `GET /callback` | Discord OAuth redirect target |
+| `GET /auth/login` | Discord OAuth login (redirects to Discord) |
+| `GET /auth/link` | Link a Discord server (bot install; requires login) |
+| `GET /callback` | Discord OAuth callback (login + guild link) |
+| `GET /login` | Alias → `/auth/login` |
+| `GET /dashboard` | Server dashboard (requires login session) |
 | `GET /.well-known/oauth-authorization-server` | OAuth server metadata for MCP clients |
 | `GET /.well-known/oauth-protected-resource` | Protected resource metadata for `/mcp` |
 | `POST /oauth/register` | Dynamic client registration |
-| `GET /oauth/authorize` | User authorization + Poke ID consent |
+| `GET /oauth/authorize` | MCP client authorization (requires Discord login session) |
 | `POST /oauth/token` | Authorization code + PKCE token exchange |
 | `POST /mcp` | MCP Streamable HTTP endpoint |
 

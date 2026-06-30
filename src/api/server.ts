@@ -53,11 +53,9 @@ export function startHttpServer(app: Express, port: number): void {
   app.listen(port, "0.0.0.0", () => {
     console.log(`[server] Listening on 0.0.0.0:${port}`);
     console.log(`[server] Public base URL: ${env.BASE_URL}`);
-    console.log(`[server] OAuth UI: ${env.BASE_URL}/auth`);
-    console.log(
-      `[server] OAuth init: ${env.BASE_URL}/auth/init?poke_user_id=<id>`,
-    );
-    console.log(`[server] Discord OAuth callback: ${env.BASE_URL}/callback`);
+    console.log(`[server] Discord login: ${env.BASE_URL}/auth/login`);
+    console.log(`[server] Discord link: ${env.BASE_URL}/auth/link`);
+    console.log(`[server] Discord callback: ${env.BASE_URL}/callback`);
     console.log(
       `[server] MCP OAuth authorize: ${env.BASE_URL}/oauth/authorize`,
     );

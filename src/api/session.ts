@@ -1,7 +1,12 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env.js";
+import {
+  createUserSession,
+  deleteUserSession,
+  getUserIdFromSessionToken,
+} from "../db/auth.js";
 
-const POKE_USER_COOKIE = "poke_user_id";
+export const SESSION_COOKIE = "poke_session";
 const THIRTY_DAYS_SECONDS = 60 * 60 * 24 * 30;
 
 const POKE_USER_HEADER_NAMES = [
@@ -27,8 +32,28 @@ function parseCookies(header: string | undefined): Record<string, string> {
   }, {});
 }
 
-/** Reads the current Poke user from query params, headers, or secure cookie. */
-export function getPokeUserIdFromRequest(req: Request): string | null {
+function getSessionTokenFromRequest(req: Request): string | null {
+  const cookies = parseCookies(req.get("cookie"));
+  const token = cookies[SESSION_COOKIE]?.trim();
+  return token || null;
+}
+
+/**
+ * Resolves the authenticated Poke user ID (Discord user snowflake).
+ * Order: session cookie → legacy headers/query (deprecated).
+ */
+export async function resolvePokeUserId(req: Request): Promise<string | null> {
+  const sessionToken = getSessionTokenFromRequest(req);
+  if (sessionToken) {
+    const userId = await getUserIdFromSessionToken(sessionToken);
+    if (userId) return userId;
+  }
+
+  return getLegacyPokeUserIdFromRequest(req);
+}
+
+/** Sync helper for legacy integrations — prefer resolvePokeUserId. */
+export function getLegacyPokeUserIdFromRequest(req: Request): string | null {
   const queryValue = req.query.poke_user_id ?? req.query.poke_id;
   const queryPokeUserId =
     typeof queryValue === "string" ? queryValue.trim() : undefined;
@@ -39,27 +64,68 @@ export function getPokeUserIdFromRequest(req: Request): string | null {
     if (headerPokeUserId) return headerPokeUserId;
   }
 
-  const cookies = parseCookies(req.get("cookie"));
-  const cookiePokeUserId = cookies[POKE_USER_COOKIE]?.trim();
-  return cookiePokeUserId || null;
+  return null;
 }
 
-/** Stores a Poke user ID in an HTTP-only cookie for dashboard/API requests. */
-export function setPokeUserCookie(res: Response, pokeUserId: string): void {
+/** @deprecated Use resolvePokeUserId for session-aware auth. */
+export function getPokeUserIdFromRequest(req: Request): string | null {
+  return getLegacyPokeUserIdFromRequest(req);
+}
+
+/** Creates a session and stores the token in an HTTP-only cookie. */
+export async function establishUserSession(
+  res: Response,
+  userId: string,
+): Promise<void> {
+  const sessionToken = await createUserSession(userId);
+  setSessionCookie(res, sessionToken);
+  setLegacyPokeUserCookie(res, userId);
+}
+
+export function setSessionCookie(res: Response, sessionToken: string): void {
   const secure = env.NODE_ENV === "production" ? "; Secure" : "";
-  res.setHeader(
+  res.append(
     "Set-Cookie",
-    `${POKE_USER_COOKIE}=${encodeURIComponent(
-      pokeUserId,
-    )}; Max-Age=${THIRTY_DAYS_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`,
+    `${SESSION_COOKIE}=${encodeURIComponent(sessionToken)}; Max-Age=${THIRTY_DAYS_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`,
   );
 }
 
-/** Clears the dashboard Poke user cookie. */
+export function setLegacyPokeUserCookie(res: Response, pokeUserId: string): void {
+  const secure = env.NODE_ENV === "production" ? "; Secure" : "";
+  res.append(
+    "Set-Cookie",
+    `poke_user_id=${encodeURIComponent(pokeUserId)}; Max-Age=${THIRTY_DAYS_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`,
+  );
+}
+
+/** @deprecated Use establishUserSession. */
+export function setPokeUserCookie(res: Response, pokeUserId: string): void {
+  setLegacyPokeUserCookie(res, pokeUserId);
+}
+
+/** Clears session and legacy cookies (logout). */
+export async function clearUserSession(req: Request, res: Response): Promise<void> {
+  const sessionToken = getSessionTokenFromRequest(req);
+  if (sessionToken) {
+    await deleteUserSession(sessionToken).catch(() => undefined);
+  }
+
+  const secure = env.NODE_ENV === "production" ? "; Secure" : "";
+  res.append(
+    "Set-Cookie",
+    `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`,
+  );
+  res.append(
+    "Set-Cookie",
+    `poke_user_id=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`,
+  );
+}
+
+/** @deprecated Use clearUserSession. */
 export function clearPokeUserCookie(res: Response): void {
   const secure = env.NODE_ENV === "production" ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${POKE_USER_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`,
+    `poke_user_id=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`,
   );
 }

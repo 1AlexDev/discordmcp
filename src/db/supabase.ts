@@ -99,13 +99,10 @@ export interface UpsertAccountLinkInput {
   botPermissions?: bigint;
 }
 
-/** Creates or updates a Discord account link for a Poke user. */
-export async function upsertAccountLink(
+export function buildAccountLinkInsertRow(
   input: UpsertAccountLinkInput,
-): Promise<AccountLink> {
-  const supabase = getSupabase();
-
-  const row = {
+): Record<string, unknown> {
+  return {
     poke_user_id: input.pokeUserId,
     discord_user_id: input.discordUserId,
     discord_guild_id: input.discordGuildId,
@@ -116,44 +113,61 @@ export async function upsertAccountLink(
     bot_permissions:
       input.botPermissions != null ? Number(input.botPermissions) : null,
   };
+}
 
-  const { data, error } = await supabase
+export async function upsertAccountLinkRecord(
+  supabase: Pick<ReturnType<typeof getSupabase>, "from">,
+  input: UpsertAccountLinkInput,
+): Promise<AccountLink> {
+  const row = buildAccountLinkInsertRow(input);
+
+  const existingQuery = supabase
     .from(ACCOUNT_LINKS_TABLE)
-    .upsert(row, { onConflict: "poke_user_id,discord_guild_id" })
-    .select()
-    .single();
+    .select("*")
+    .eq("poke_user_id", input.pokeUserId)
+    .eq("discord_guild_id", input.discordGuildId)
+    .maybeSingle();
 
-  if (!error) {
+  const { data: existingData, error: existingError } = await existingQuery;
+
+  if (existingError) {
+    throw new Error(`Failed to check existing account link: ${existingError.message}`);
+  }
+
+  if (existingData) {
+    const { data, error } = await supabase
+      .from(ACCOUNT_LINKS_TABLE)
+      .update(row)
+      .eq("id", existingData.id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update account link: ${error.message}`);
+    }
+
     return rowToAccountLink(data as AccountLinkRow);
   }
 
-  const shouldTryLegacyUpsert =
-    error.code === "42P10" ||
-    error.code === "23505" ||
-    error.message.toLowerCase().includes("unique") ||
-    error.message.toLowerCase().includes("constraint");
-
-  if (!shouldTryLegacyUpsert) {
-    throw new Error(`Failed to upsert account link: ${error.message}`);
-  }
-
-  console.warn(
-    "[supabase] Composite account-link upsert failed; falling back to legacy poke_user_id upsert. Apply migration 002_multi_server_account_links.sql to enable multi-server links.",
-  );
-
-  const { data: legacyData, error: legacyError } = await supabase
+  const { data, error } = await supabase
     .from(ACCOUNT_LINKS_TABLE)
-    .upsert(row, { onConflict: "poke_user_id" })
+    .insert(row)
     .select()
     .single();
 
-  if (legacyError) {
-    throw new Error(
-      `Failed to upsert account link: ${error.message}; legacy fallback failed: ${legacyError.message}`,
-    );
+  if (error) {
+    throw new Error(`Failed to create account link: ${error.message}`);
   }
 
-  return rowToAccountLink(legacyData as AccountLinkRow);
+  return rowToAccountLink(data as AccountLinkRow);
+}
+
+/** Creates or updates a Discord account link for a Poke user. */
+export async function upsertAccountLink(
+  input: UpsertAccountLinkInput,
+): Promise<AccountLink> {
+  const supabase = getSupabase();
+  return upsertAccountLinkRecord(supabase, input);
 }
 
 /** Fetches an account link by Poke user ID. Returns null if not linked. */

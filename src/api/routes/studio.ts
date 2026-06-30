@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { getPokeUserIdFromRequest } from "../session.js";
+import { resolvePokeUserId } from "../session.js";
 import {
   getAutomationScriptById,
   isGuildLinkedToPokeUser,
@@ -358,9 +358,9 @@ function renderStudioPage(
 }
 
 studioRouter.get("/:guild_id", async (req: Request, res: Response) => {
-  const pokeUserId = getPokeUserIdFromRequest(req);
+  const pokeUserId = await resolvePokeUserId(req);
   if (!pokeUserId) {
-    res.redirect("/auth");
+    res.redirect("/auth/login");
     return;
   }
 
@@ -377,9 +377,9 @@ studioRouter.get("/:guild_id", async (req: Request, res: Response) => {
 studioRouter.get(
   "/:guild_id/:script_id",
   async (req: Request, res: Response) => {
-    const pokeUserId = getPokeUserIdFromRequest(req);
+    const pokeUserId = await resolvePokeUserId(req);
     if (!pokeUserId) {
-      res.redirect("/auth");
+      res.redirect("/auth/login");
       return;
     }
 

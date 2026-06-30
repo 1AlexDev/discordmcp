@@ -1,44 +1,22 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { env, mcpServerUrl } from "../config/env.js";
-import { getPokeUserIdFromRequest, setPokeUserCookie } from "./session.js";
+import {
+  cleanupExpiredOAuthRecords,
+  consumeAuthorizationCode,
+  getOAuthClient,
+  getUserIdFromAccessToken,
+  randomToken,
+  registerOAuthClient,
+  storeAccessToken,
+  storeAuthorizationCode,
+  ACCESS_TOKEN_TTL_MS,
+} from "../db/auth.js";
+import { resolvePokeUserId } from "./session.js";
 
-const AUTH_CODE_TTL_MS = 10 * 60 * 1000;
-const ACCESS_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
-const ACCESS_TOKEN_TTL_MS = ACCESS_TOKEN_TTL_SECONDS * 1000;
 const DEFAULT_SCOPE = "mcp";
-
-type OAuthClient = {
-  clientId: string;
-  clientSecret?: string;
-  clientName?: string;
-  redirectUris: string[];
-  createdAt: number;
-};
-
-type AuthorizationCode = {
-  code: string;
-  clientId: string;
-  redirectUri: string;
-  pokeUserId: string;
-  scope: string;
-  codeChallenge: string;
-  codeChallengeMethod: "S256";
-  expiresAt: number;
-};
-
-type AccessToken = {
-  token: string;
-  clientId: string;
-  pokeUserId: string;
-  scope: string;
-  expiresAt: number;
-};
-
-const clients = new Map<string, OAuthClient>();
-const authorizationCodes = new Map<string, AuthorizationCode>();
-const accessTokens = new Map<string, AccessToken>();
+const ACCESS_TOKEN_TTL_SECONDS = Math.floor(ACCESS_TOKEN_TTL_MS / 1000);
 
 const clientRegistrationSchema = z.object({
   redirect_uris: z.array(z.string().url()).min(1),
@@ -58,8 +36,6 @@ const authorizeQuerySchema = z.object({
   state: z.string().optional(),
   scope: z.string().optional(),
   resource: z.string().optional(),
-  poke_user_id: z.string().optional(),
-  poke_id: z.string().optional(),
   approve: z.string().optional(),
 });
 
@@ -70,10 +46,6 @@ const tokenRequestSchema = z.object({
   client_id: z.string().min(1),
   code_verifier: z.string().min(43),
 });
-
-function randomToken(prefix: string): string {
-  return `${prefix}_${randomBytes(32).toString("base64url")}`;
-}
 
 function jsonError(
   res: Response,
@@ -115,42 +87,33 @@ function protectedResourceMetadata() {
     authorization_servers: [getIssuer()],
     bearer_methods_supported: ["header"],
     scopes_supported: [DEFAULT_SCOPE],
-    resource_documentation: `${getIssuer()}/auth`,
+    resource_documentation: `${getIssuer()}/auth/login`,
   };
 }
 
-function cleanupExpired(): void {
-  const now = Date.now();
-  for (const [code, value] of authorizationCodes) {
-    if (value.expiresAt <= now) authorizationCodes.delete(code);
-  }
-  for (const [token, value] of accessTokens) {
-    if (value.expiresAt <= now) accessTokens.delete(token);
-  }
-}
+async function resolveOAuthClient(clientId: string) {
+  const stored = await getOAuthClient(clientId);
+  if (stored) return stored;
 
-function getClient(clientId: string): OAuthClient | null {
-  const client = clients.get(clientId);
-  if (client) return client;
-
-  // Some MCP clients do not perform dynamic registration and instead use a
-  // preconfigured public client id. Allow those clients in development and for
-  // simple hosted deployments while still validating their exact redirect URI.
   if (clientId === "poke-discord-mcp-public") {
     return {
-      clientId,
-      redirectUris: [],
-      clientName: "Public MCP Client",
-      createdAt: 0,
+      client_id: clientId,
+      client_secret: null,
+      client_name: "Public MCP Client",
+      redirect_uris: [] as string[],
+      created_at: new Date(0).toISOString(),
     };
   }
 
   return null;
 }
 
-function isRedirectUriAllowed(client: OAuthClient, redirectUri: string): boolean {
-  if (client.redirectUris.length === 0) return true;
-  return client.redirectUris.includes(redirectUri);
+function isRedirectUriAllowed(
+  redirectUris: string[],
+  redirectUri: string,
+): boolean {
+  if (redirectUris.length === 0) return true;
+  return redirectUris.includes(redirectUri);
 }
 
 function appendErrorRedirect(
@@ -189,15 +152,15 @@ function escapeHtml(value: string): string {
 
 function renderAuthorizePage(options: {
   clientName: string;
-  pokeUserId: string;
+  discordLabel: string;
   params: URLSearchParams;
   error?: string;
 }): string {
   const safeClientName = escapeHtml(options.clientName);
-  const safePokeUserId = escapeHtml(options.pokeUserId);
+  const safeDiscordLabel = escapeHtml(options.discordLabel);
   const safeError = options.error ? escapeHtml(options.error) : null;
   const hiddenInputs = [...options.params.entries()]
-    .filter(([key]) => key !== "approve" && key !== "poke_user_id")
+    .filter(([key]) => key !== "approve")
     .map(
       ([key, value]) =>
         `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`,
@@ -210,48 +173,28 @@ function renderAuthorizePage(options: {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <title>Authorize MCP Access — Poke Discord MCP</title>
+  <title>Authorize MCP Access</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-neutral-950 text-white">
   <main class="flex min-h-screen items-center justify-center px-6 py-12">
-    <section class="w-full max-w-md rounded-3xl border border-neutral-800 bg-neutral-900/70 p-8 shadow-2xl shadow-black/30">
+    <section class="w-full max-w-md rounded-3xl border border-neutral-800 bg-neutral-900/70 p-8">
       <div class="mb-8 text-center">
-        <div class="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-neutral-950">AI</div>
         <p class="mb-3 text-xs font-medium uppercase tracking-[0.24em] text-neutral-500">OAuth for MCP</p>
-        <h1 class="text-3xl font-semibold tracking-[-0.04em]">Connect ${safeClientName}</h1>
-        <p class="mt-4 text-sm leading-6 text-neutral-400">
-          This lets your AI client call the Poke Discord MCP tools for your linked Discord servers.
-        </p>
+        <h1 class="text-3xl font-semibold">Connect ${safeClientName}</h1>
+        <p class="mt-4 text-sm text-neutral-400">Signed in as <span class="text-white">${safeDiscordLabel}</span></p>
       </div>
-
       ${safeError ? `<div class="mb-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-200">${safeError}</div>` : ""}
-
       <form action="/oauth/authorize" method="GET" class="space-y-5">
         ${hiddenInputs}
         <input type="hidden" name="approve" value="1">
-        <div class="space-y-2">
-          <label for="poke_user_id" class="block text-sm font-medium text-neutral-300">Poke ID</label>
-          <input
-            id="poke_user_id"
-            name="poke_user_id"
-            required
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="Your Poke user ID"
-            value="${safePokeUserId}"
-            class="w-full rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 text-[15px] text-white outline-none placeholder:text-neutral-600 hover:border-neutral-700 focus:border-white"
-          >
-        </div>
         <button type="submit" class="w-full rounded-xl bg-white px-4 py-3 text-[15px] font-semibold text-neutral-950 hover:bg-neutral-200">
           Authorize MCP Access
         </button>
       </form>
-
-      <div class="mt-8 space-y-3 text-center text-xs leading-5 text-neutral-500">
-        <p>No tool schemas receive your Poke ID. It is stored only in request context from this OAuth token.</p>
-        <a href="/auth" class="font-medium text-neutral-300 hover:text-white">Need to link a Discord server first?</a>
-      </div>
+      <p class="mt-8 text-center text-xs text-neutral-500">
+        <a href="/auth/link" class="font-medium text-neutral-300 hover:text-white">Link a Discord server first</a>
+      </p>
     </section>
   </main>
 </body>
@@ -263,26 +206,22 @@ function bodyValue(req: Request, key: string): unknown {
   return body?.[key];
 }
 
-export function getMcpOAuthPokeUserIdFromRequest(req: Request): string | null {
-  cleanupExpired();
+export async function getMcpOAuthPokeUserIdFromRequest(
+  req: Request,
+): Promise<string | null> {
+  await cleanupExpiredOAuthRecords();
+
   const authorization = req.get("authorization")?.trim();
   if (!authorization?.toLowerCase().startsWith("bearer ")) return null;
 
   const token = authorization.slice("bearer ".length).trim();
   if (!token) return null;
 
-  const accessToken = accessTokens.get(token);
-  if (!accessToken || accessToken.expiresAt <= Date.now()) {
-    if (accessToken) accessTokens.delete(token);
-    return null;
-  }
-
-  return accessToken.pokeUserId;
+  return getUserIdFromAccessToken(token);
 }
 
 export const oauthRouter = Router();
 
-// OAuth Authorization Server Metadata (RFC 8414 / MCP discovery).
 oauthRouter.get("/.well-known/oauth-authorization-server", (_req, res) => {
   res.json(authorizationServerMetadata());
 });
@@ -291,7 +230,6 @@ oauthRouter.get("/.well-known/oauth-authorization-server/mcp", (_req, res) => {
   res.json(authorizationServerMetadata());
 });
 
-// OAuth Protected Resource Metadata (RFC 9728 / MCP discovery).
 oauthRouter.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json(protectedResourceMetadata());
 });
@@ -300,8 +238,7 @@ oauthRouter.get("/.well-known/oauth-protected-resource/mcp", (_req, res) => {
   res.json(protectedResourceMetadata());
 });
 
-// Dynamic Client Registration for clients such as Claude, ChatGPT, and Poke.
-oauthRouter.post("/oauth/register", (req, res) => {
+oauthRouter.post("/oauth/register", async (req, res) => {
   const parsed = clientRegistrationSchema.safeParse(req.body);
   if (!parsed.success) {
     jsonError(res, 400, "invalid_client_metadata", "Invalid client metadata.");
@@ -309,19 +246,17 @@ oauthRouter.post("/oauth/register", (req, res) => {
   }
 
   const clientId = randomToken("mcp_client");
-  const client: OAuthClient = {
+  const client = await registerOAuthClient({
     clientId,
-    redirectUris: parsed.data.redirect_uris,
     clientName: parsed.data.client_name,
-    createdAt: Date.now(),
-  };
-  clients.set(clientId, client);
+    redirectUris: parsed.data.redirect_uris,
+  });
 
   res.status(201).json({
-    client_id: clientId,
-    client_id_issued_at: Math.floor(client.createdAt / 1000),
-    redirect_uris: client.redirectUris,
-    client_name: client.clientName,
+    client_id: client.client_id,
+    client_id_issued_at: Math.floor(Date.parse(client.created_at) / 1000),
+    redirect_uris: client.redirect_uris,
+    client_name: client.client_name,
     grant_types: ["authorization_code"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
@@ -329,10 +264,9 @@ oauthRouter.post("/oauth/register", (req, res) => {
   });
 });
 
-// Authorization endpoint. The user enters their Poke ID and grants an MCP client
-// an authorization code. Discord linking remains separate at /auth.
-oauthRouter.get("/oauth/authorize", (req: Request, res: Response) => {
-  cleanupExpired();
+oauthRouter.get("/oauth/authorize", async (req: Request, res: Response) => {
+  await cleanupExpiredOAuthRecords();
+
   const parsed = authorizeQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).type("text").send("Invalid OAuth authorization request.");
@@ -340,13 +274,13 @@ oauthRouter.get("/oauth/authorize", (req: Request, res: Response) => {
   }
 
   const query = parsed.data;
-  const client = getClient(query.client_id);
+  const client = await resolveOAuthClient(query.client_id);
   if (!client) {
     res.status(400).type("text").send("Unknown OAuth client.");
     return;
   }
 
-  if (!isRedirectUriAllowed(client, query.redirect_uri)) {
+  if (!isRedirectUriAllowed(client.redirect_uris, query.redirect_uri)) {
     res.status(400).type("text").send("Invalid OAuth redirect URI.");
     return;
   }
@@ -363,39 +297,33 @@ oauthRouter.get("/oauth/authorize", (req: Request, res: Response) => {
     return;
   }
 
-  const pokeUserId = (
-    query.poke_user_id ??
-    query.poke_id ??
-    getPokeUserIdFromRequest(req) ??
-    ""
-  ).trim();
+  const userId = await resolvePokeUserId(req);
+  if (!userId) {
+    res.redirect(
+      `/auth/login?return_to=${encodeURIComponent(req.originalUrl)}`,
+    );
+    return;
+  }
 
-  if (query.approve !== "1" || !pokeUserId) {
+  if (query.approve !== "1") {
     res.type("html").send(
       renderAuthorizePage({
-        clientName: client.clientName ?? client.clientId,
-        pokeUserId,
+        clientName: client.client_name ?? client.client_id,
+        discordLabel: userId,
         params: new URLSearchParams(req.query as Record<string, string>),
-        error:
-          query.approve === "1" && !pokeUserId
-            ? "Enter your Poke ID to authorize this MCP client."
-            : undefined,
       }),
     );
     return;
   }
 
-  setPokeUserCookie(res, pokeUserId);
   const code = randomToken("mcp_code");
-  authorizationCodes.set(code, {
+  await storeAuthorizationCode({
     code,
-    clientId: client.clientId,
+    clientId: client.client_id,
     redirectUri: query.redirect_uri,
-    pokeUserId,
+    userId,
     scope: query.scope || DEFAULT_SCOPE,
     codeChallenge: query.code_challenge,
-    codeChallengeMethod: query.code_challenge_method,
-    expiresAt: Date.now() + AUTH_CODE_TTL_MS,
   });
 
   const redirectUrl = new URL(query.redirect_uri);
@@ -404,9 +332,9 @@ oauthRouter.get("/oauth/authorize", (req: Request, res: Response) => {
   res.redirect(redirectUrl.href);
 });
 
-// Token endpoint for authorization_code + PKCE.
-oauthRouter.post("/oauth/token", (req: Request, res: Response) => {
-  cleanupExpired();
+oauthRouter.post("/oauth/token", async (req: Request, res: Response) => {
+  await cleanupExpiredOAuthRecords();
+
   const parsed = tokenRequestSchema.safeParse({
     grant_type: bodyValue(req, "grant_type"),
     code: bodyValue(req, "code"),
@@ -421,31 +349,32 @@ oauthRouter.post("/oauth/token", (req: Request, res: Response) => {
   }
 
   const request = parsed.data;
-  const code = authorizationCodes.get(request.code);
-  authorizationCodes.delete(request.code);
+  const code = await consumeAuthorizationCode(request.code);
 
-  if (!code || code.expiresAt <= Date.now()) {
+  if (!code) {
     jsonError(res, 400, "invalid_grant", "Authorization code is invalid or expired.");
     return;
   }
 
-  if (code.clientId !== request.client_id || code.redirectUri !== request.redirect_uri) {
+  if (
+    code.client_id !== request.client_id ||
+    code.redirect_uri !== request.redirect_uri
+  ) {
     jsonError(res, 400, "invalid_grant", "Authorization code does not match this client.");
     return;
   }
 
-  if (!verifyPkce(request.code_verifier, code.codeChallenge)) {
+  if (!verifyPkce(request.code_verifier, code.code_challenge)) {
     jsonError(res, 400, "invalid_grant", "PKCE verification failed.");
     return;
   }
 
   const token = randomToken("mcp_token");
-  accessTokens.set(token, {
+  await storeAccessToken({
     token,
-    clientId: code.clientId,
-    pokeUserId: code.pokeUserId,
+    clientId: code.client_id,
+    userId: code.user_id,
     scope: code.scope,
-    expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
   });
 
   res.json({
@@ -454,4 +383,9 @@ oauthRouter.post("/oauth/token", (req: Request, res: Response) => {
     expires_in: ACCESS_TOKEN_TTL_SECONDS,
     scope: code.scope,
   });
+});
+
+// Top-level /login alias for convenience
+oauthRouter.get("/login", (_req, res) => {
+  res.redirect("/auth/login");
 });
