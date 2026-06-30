@@ -10,7 +10,6 @@ import {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
-  ModalSubmitInteraction,
 } from "discord.js";
 import {
   getActiveAutomationScriptsForTrigger,
@@ -29,11 +28,15 @@ const scriptCache = new Map<
 export const interactionStream = {
   listeners: new Set<(event: any) => void>(),
   push(event: any) {
-    this.listeners.forEach(l => l(event));
-  }
+    this.listeners.forEach((l) => l(event));
+  },
 };
 
-function cacheKey(guildId: string, eventType: string, triggerId: string | null): string {
+function cacheKey(
+  guildId: string,
+  eventType: string,
+  triggerId: string | null,
+): string {
   return `${guildId}:${eventType}:${triggerId ?? ""}`;
 }
 
@@ -71,9 +74,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildEmbed(raw: Record<string, unknown>, variables: Record<string, string>): EmbedBuilder {
+function buildEmbed(
+  raw: Record<string, unknown>,
+  variables: Record<string, string>,
+): EmbedBuilder {
   const embed = new EmbedBuilder();
-  
+
   const replaceVars = (str: string) => {
     let result = str;
     for (const [key, val] of Object.entries(variables)) {
@@ -83,18 +89,19 @@ function buildEmbed(raw: Record<string, unknown>, variables: Record<string, stri
   };
 
   if (typeof raw.title === "string") embed.setTitle(replaceVars(raw.title));
-  if (typeof raw.description === "string") embed.setDescription(replaceVars(raw.description));
+  if (typeof raw.description === "string")
+    embed.setDescription(replaceVars(raw.description));
   if (typeof raw.color === "number") embed.setColor(raw.color);
-  if (typeof raw.footer === "string") embed.setFooter({ text: replaceVars(raw.footer) });
+  if (typeof raw.footer === "string")
+    embed.setFooter({ text: replaceVars(raw.footer) });
   if (Array.isArray(raw.fields)) {
     embed.addFields(
-      raw.fields
-        .filter(isRecord)
-        .map((field) => ({
-          name: typeof field.name === "string" ? replaceVars(field.name) : "Field",
-          value: typeof field.value === "string" ? replaceVars(field.value) : " ",
-          inline: typeof field.inline === "boolean" ? field.inline : undefined,
-        })),
+      raw.fields.filter(isRecord).map((field) => ({
+        name:
+          typeof field.name === "string" ? replaceVars(field.name) : "Field",
+        value: typeof field.value === "string" ? replaceVars(field.value) : " ",
+        inline: typeof field.inline === "boolean" ? field.inline : undefined,
+      })),
     );
   }
   return embed;
@@ -110,7 +117,7 @@ async function executeAction(
     message?: Message;
     interaction?: Interaction;
   },
-  variables: Record<string, string>
+  variables: Record<string, string>,
 ): Promise<Record<string, string>> {
   if (!isRecord(action) || typeof action.type !== "string") return variables;
 
@@ -124,40 +131,70 @@ async function executeAction(
 
   switch (action.type) {
     case "SEND_MESSAGE": {
-      const channelId = typeof action.channel_id === "string" ? replaceVars(action.channel_id) : (context.interaction?.channelId || context.message?.channelId);
-      const content = typeof action.content === "string" ? replaceVars(action.content) : undefined;
-      const components = Array.isArray(action.components) ? action.components : undefined;
+      const channelId =
+        typeof action.channel_id === "string"
+          ? replaceVars(action.channel_id)
+          : context.interaction?.channelId || context.message?.channelId;
+      const content =
+        typeof action.content === "string"
+          ? replaceVars(action.content)
+          : undefined;
+      const components = Array.isArray(action.components)
+        ? action.components
+        : undefined;
       const ephemeral = action.ephemeral === true;
 
       if (!channelId || (!content && !components)) return variables;
 
       if (ephemeral && context.interaction?.isRepliable()) {
-        await (context.interaction as any).reply({ content, components: components as any, ephemeral: true });
+        await (context.interaction as any).reply({
+          content,
+          components: components as any,
+          ephemeral: true,
+        });
       } else {
-        const channel = await context.client.channels.fetch(channelId).catch(() => null);
+        const channel = await context.client.channels
+          .fetch(channelId)
+          .catch(() => null);
         if (!channel || !channel.isTextBased()) return variables;
-        await (channel as TextChannel).send({ content, components: components as any });
+        await (channel as TextChannel).send({
+          content,
+          components: components as any,
+        });
       }
       return variables;
     }
 
     case "SEND_EMBED": {
-      const channelId = typeof action.channel_id === "string" ? replaceVars(action.channel_id) : (context.interaction?.channelId || context.message?.channelId);
+      const channelId =
+        typeof action.channel_id === "string"
+          ? replaceVars(action.channel_id)
+          : context.interaction?.channelId || context.message?.channelId;
       const embedData = isRecord(action.embed) ? action.embed : null;
       if (!channelId || !embedData) return variables;
 
-      const channel = await context.client.channels.fetch(channelId).catch(() => null);
+      const channel = await context.client.channels
+        .fetch(channelId)
+        .catch(() => null);
       if (!channel || !channel.isTextBased()) return variables;
-      await (channel as TextChannel).send({ embeds: [buildEmbed(embedData, variables)] });
+      await (channel as TextChannel).send({
+        embeds: [buildEmbed(embedData, variables)],
+      });
       return variables;
     }
 
     case "ADD_ROLE": {
-      const roleId = typeof action.role_id === "string" ? replaceVars(action.role_id) : null;
-      const userId = typeof action.user_id === "string" ? replaceVars(action.user_id) : context.member?.id;
+      const roleId =
+        typeof action.role_id === "string" ? replaceVars(action.role_id) : null;
+      const userId =
+        typeof action.user_id === "string"
+          ? replaceVars(action.user_id)
+          : context.member?.id;
       if (!roleId || !userId) return variables;
 
-      const guild = await context.client.guilds.fetch(context.guildId).catch(() => null);
+      const guild = await context.client.guilds
+        .fetch(context.guildId)
+        .catch(() => null);
       const member = await guild?.members.fetch(userId).catch(() => null);
       if (!member) return variables;
       await member.roles.add(roleId, `Automation script ${script.id}`);
@@ -165,56 +202,98 @@ async function executeAction(
     }
 
     case "CREATE_CHANNEL": {
-      const name = typeof action.name === "string" ? replaceVars(action.name) : null;
+      const name =
+        typeof action.name === "string" ? replaceVars(action.name) : null;
       if (!name) return variables;
 
-      const guild = await context.client.guilds.fetch(context.guildId).catch(() => null);
+      const guild = await context.client.guilds
+        .fetch(context.guildId)
+        .catch(() => null);
       if (!guild) return variables;
 
       const permissionOverwrites = Array.isArray(action.permission_overwrites)
-        ? action.permission_overwrites.map((ow: any) => ({
-            id: typeof ow.id === "string" ? replaceVars(ow.id) : ow.id,
-            type: ow.type,
-            allow: ow.allow ? BigInt(ow.allow) : undefined,
-            deny: ow.deny ? BigInt(ow.deny) : undefined,
-          })).filter(ow => ow.id)
+        ? action.permission_overwrites
+            .map((ow: any) => ({
+              id: typeof ow.id === "string" ? replaceVars(ow.id) : ow.id,
+              type: ow.type,
+              allow: ow.allow ? BigInt(ow.allow) : undefined,
+              deny: ow.deny ? BigInt(ow.deny) : undefined,
+            }))
+            .filter((ow) => ow.id)
         : undefined;
 
       const channel = await guild.channels.create({
         name,
         type: ChannelType.GuildText,
-        parent: typeof action.parent_id === "string" ? replaceVars(action.parent_id) : undefined,
+        parent:
+          typeof action.parent_id === "string"
+            ? replaceVars(action.parent_id)
+            : undefined,
         permissionOverwrites: permissionOverwrites as any,
       });
 
       if (channel.isTextBased()) {
-        const content = typeof action.initial_message === "string" ? replaceVars(action.initial_message) : undefined;
-        const components = Array.isArray(action.components) ? action.components : undefined;
+        const content =
+          typeof action.initial_message === "string"
+            ? replaceVars(action.initial_message)
+            : undefined;
+        const components = Array.isArray(action.components)
+          ? action.components
+          : undefined;
         if (content || components) {
           await channel.send({ content, components: components as any });
         }
       }
-      
-      return { ...variables, channel_id: channel.id, channel_name: channel.name };
+
+      return {
+        ...variables,
+        channel_id: channel.id,
+        channel_name: channel.name,
+      };
     }
 
     case "SHOW_MODAL": {
-      if (!context.interaction?.isModalSubmit && (context.interaction as any).showModal) {
+      if (
+        !context.interaction?.isModalSubmit &&
+        (context.interaction as any).showModal
+      ) {
         const modal = new ModalBuilder()
-          .setCustomId(typeof action.custom_id === "string" ? replaceVars(action.custom_id) : `modal-${script.id}`)
-          .setTitle(typeof action.title === "string" ? replaceVars(action.title) : "Form");
+          .setCustomId(
+            typeof action.custom_id === "string"
+              ? replaceVars(action.custom_id)
+              : `modal-${script.id}`,
+          )
+          .setTitle(
+            typeof action.title === "string"
+              ? replaceVars(action.title)
+              : "Form",
+          );
 
         const rows: ActionRowBuilder<TextInputBuilder>[] = [];
         if (Array.isArray(action.fields)) {
           for (const field of action.fields) {
             if (!isRecord(field)) continue;
             const input = new TextInputBuilder()
-              .setCustomId(typeof field.custom_id === "string" ? replaceVars(field.custom_id) : "field")
-              .setLabel(typeof field.label === "string" ? replaceVars(field.label) : "Input")
-              .setStyle(field.paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short)
+              .setCustomId(
+                typeof field.custom_id === "string"
+                  ? replaceVars(field.custom_id)
+                  : "field",
+              )
+              .setLabel(
+                typeof field.label === "string"
+                  ? replaceVars(field.label)
+                  : "Input",
+              )
+              .setStyle(
+                field.paragraph
+                  ? TextInputStyle.Paragraph
+                  : TextInputStyle.Short,
+              )
               .setRequired(field.required !== false);
-            
-            rows.push(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+
+            rows.push(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(input),
+            );
           }
         }
         modal.addComponents(...rows);
@@ -224,17 +303,24 @@ async function executeAction(
     }
 
     case "DELETE_CHANNEL": {
-      const channelId = typeof action.channel_id === "string" ? replaceVars(action.channel_id) : context.interaction?.channelId;
+      const channelId =
+        typeof action.channel_id === "string"
+          ? replaceVars(action.channel_id)
+          : context.interaction?.channelId;
       if (!channelId) return variables;
 
-      const channel = await context.client.channels.fetch(channelId).catch(() => null);
+      const channel = await context.client.channels
+        .fetch(channelId)
+        .catch(() => null);
       if (!channel) return variables;
       await channel.delete(`Automation script ${script.id}`);
       return variables;
     }
 
     default:
-      console.warn(`[automation] Unknown action type ${action.type} in script ${script.id}`);
+      console.warn(
+        `[automation] Unknown action type ${action.type} in script ${script.id}`,
+      );
       return variables;
   }
 }
@@ -248,17 +334,18 @@ export async function executeScripts(
     message?: Message;
     interaction?: Interaction;
   },
-  initialVariables: Record<string, string> = {}
+  initialVariables: Record<string, string> = {},
 ): Promise<void> {
   const baseVariables = {
     ...initialVariables,
     userId: context.member?.id || context.interaction?.user.id || "",
-    username: context.member?.user.username || context.interaction?.user.username || "",
+    username:
+      context.member?.user.username || context.interaction?.user.username || "",
     guildId: context.guildId,
   };
 
   for (const script of scripts) {
-    let variables = { ...baseVariables };
+    let variables: Record<string, string> = { ...baseVariables };
     for (const action of script.actions) {
       try {
         variables = await executeAction(script, action, context, variables);
@@ -297,7 +384,9 @@ export function registerAutomationListeners(client: Client): void {
         );
         if (!scripts.length) return;
 
-        const hasModal = scripts.some(s => s.actions.some((a: any) => a.type === "SHOW_MODAL"));
+        const hasModal = scripts.some((s) =>
+          s.actions.some((a: any) => a.type === "SHOW_MODAL"),
+        );
 
         if (!hasModal && !interaction.deferred && !interaction.replied) {
           await interaction.deferUpdate().catch(() => undefined);
@@ -306,7 +395,10 @@ export function registerAutomationListeners(client: Client): void {
         await executeScripts(scripts, {
           client,
           guildId: interaction.guildId,
-          member: interaction.member instanceof Object ? (interaction.member as GuildMember) : null,
+          member:
+            interaction.member instanceof Object
+              ? (interaction.member as GuildMember)
+              : null,
           interaction,
         });
       } catch (err) {
@@ -326,16 +418,25 @@ export function registerAutomationListeners(client: Client): void {
         }
 
         const modalVars: Record<string, string> = {};
-        interaction.fields.fields.forEach(f => {
-          modalVars[f.customId] = f.value;
+        interaction.fields.fields.forEach((f: any) => {
+          if (f.value !== undefined) {
+            modalVars[f.customId] = f.value;
+          }
         });
 
-        await executeScripts(scripts, {
-          client,
-          guildId: interaction.guildId,
-          member: interaction.member instanceof Object ? (interaction.member as GuildMember) : null,
-          interaction,
-        }, modalVars);
+        await executeScripts(
+          scripts,
+          {
+            client,
+            guildId: interaction.guildId,
+            member:
+              interaction.member instanceof Object
+                ? (interaction.member as GuildMember)
+                : null,
+            interaction,
+          },
+          modalVars,
+        );
       } catch (err) {
         console.error("[automation] interactionCreate (modal) failed:", err);
       }

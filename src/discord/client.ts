@@ -4,8 +4,6 @@ import {
   Partials,
   ChannelType,
   PermissionFlagsBits,
-  REST,
-  Routes,
 } from "discord.js";
 import { env } from "../config/env.js";
 import { registerAutomationListeners } from "./automation-engine.js";
@@ -29,12 +27,17 @@ export function getDiscordClient(): Client {
       partials: [Partials.Channel],
       // discord.js handles 429s automatically by retrying.
       // We configure the global timeout and retry limit for safety.
-      retryLimit: 5,
-      restGlobalRateLimit: 50, 
+      rest: {
+        retries: 5,
+        globalRequestsPerSecond: 50,
+      },
     });
 
     discordClient.rest.on("rateLimited", (data) => {
-      console.warn(`[discord] Rate limited on ${data.route}: ${data.retryAfter}ms`, data);
+      console.warn(
+        `[discord] Rate limited on ${data.route}: ${data.retryAfter}ms`,
+        data,
+      );
     });
   }
   return discordClient;
